@@ -1,16 +1,20 @@
 """
-Anti-Cheat Middleware
-Prevents rate abuse, duplicate exploits
+Anti-Cheat Middleware - No Redis version
 """
+import time
 import logging
 from typing import Callable, Any
+from collections import defaultdict
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Message
 
-from src.core.cache.redis_client import get_cache
-from src.core.config import settings
-
 logger = logging.getLogger(__name__)
+
+_rate_counts: dict = defaultdict(list)
+_cooldowns: dict = {}
+
+COMMAND_COOLDOWN = 3
+MAX_COMMANDS_PER_MINUTE = 20
 
 
 class AntiCheatMiddleware(BaseMiddleware):
@@ -19,25 +23,19 @@ class AntiCheatMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         user_id = event.from_user.id
-        cache = await get_cache()
+        now = time.time()
 
-        # Rate limit: max commands per minute
-        count = await cache.rate_limit(user_id)
-        if count > settings.MAX_COMMANDS_PER_MINUTE:
-            if count == settings.MAX_COMMANDS_PER_MINUTE + 1:
-                # Log suspicious activity once
-                logger.warning(f"Rate limit hit: user {user_id} sent {count} commands/min")
-                await event.answer(
-                    "⚠️ Slow down! You're sending commands too fast. Please wait a moment.",
-                    show_alert=True
-                )
+        minute_ago = now - 60
+        _rate_counts[user_id] = [t for t in _rate_counts[user_id] if t > minute_ago]
+        _rate_counts[user_id].append(now)
+
+        if len(_rate_counts[user_id]) > MAX_COMMANDS_PER_MINUTE:
+            await event.answer("⚠️ Too many commands! Please slow down.")
             return
 
-        # Global command cooldown
-        cooldown = await cache.get_cooldown(user_id, "global")
-        if cooldown:
-            return  # silently ignore during cooldown
+        last = _cooldowns.get(user_id, 0)
+        if now - last < COMMAND_COOLDOWN:
+            return
 
-        await cache.set_cooldown(user_id, "global", settings.COMMAND_COOLDOWN)
-
+        _cooldowns[user_id] = now
         return await handler(event, data)

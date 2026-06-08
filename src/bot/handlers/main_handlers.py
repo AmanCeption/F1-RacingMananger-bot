@@ -56,6 +56,10 @@ class DeleteTeamStates(StatesGroup):
     waiting_confirm = State()
 
 
+class RenameTeamStates(StatesGroup):
+    waiting_newname = State()
+
+
 # ─────────────────────────────────────────────
 # START & REGISTER
 # ─────────────────────────────────────────────
@@ -856,6 +860,331 @@ Yeh code main_handlers.py mein add karo:
 
 2. Neeche handlers mein yeh do functions add karo
 """
+
+
+
+@router.callback_query(F.data.startswith("market:transfers:"))
+async def market_transfers(callback: CallbackQuery):
+    page = int(callback.data.split(":")[2])
+    per_page = 5
+
+    async with get_session() as db:
+        listings = await DriverMarketService(db).get_transfer_listings()
+
+    total_pages = max(1, (len(listings) + per_page - 1) // per_page)
+    page_listings = listings[page * per_page:(page + 1) * per_page]
+
+    text = "💸 <b>Transfer List</b>\n\n"
+    for transfer, driver, team in page_listings:
+        text += (
+            f"<b>{safe(driver.name)}</b>\n"
+            f"  From: {safe(team.name) if team else 'Free Agent'}\n"
+            f"  Price: ${transfer.asking_price:,}\n"
+            f"  Command: /buydriver {driver.id}\n\n"
+        )
+
+    if not page_listings:
+        text += "No transfer listings right now."
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=pagination_kb("market:transfers", page, total_pages)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("market:auctions:"))
+async def market_auctions(callback: CallbackQuery):
+    page = int(callback.data.split(":")[2])
+    per_page = 5
+
+    async with get_session() as db:
+        from sqlalchemy import select
+        from src.models.models import DriverTransfer, Driver, Team, TransferStatus
+        result = await db.execute(
+            select(DriverTransfer, Driver)
+            .join(Driver, DriverTransfer.driver_id == Driver.id)
+            .where(
+                DriverTransfer.is_auction == True,
+                DriverTransfer.status == TransferStatus.PENDING
+            )
+        )
+        auctions = result.all()
+
+    total_pages = max(1, (len(auctions) + per_page - 1) // per_page)
+    page_auctions = auctions[page * per_page:(page + 1) * per_page]
+
+    text = "🔨 <b>Active Auctions</b>\n\n"
+    for transfer, driver in page_auctions:
+        current_bid = transfer.highest_bid or transfer.asking_price
+        text += (
+            f"<b>{safe(driver.name)}</b>\n"
+            f"  Current Bid: ${current_bid:,}\n"
+            f"  Skill: {driver.skill}/100\n"
+            f"  Bid: /bid {transfer.id} amount\n\n"
+        )
+
+    if not page_auctions:
+        text += "No active auctions right now.\n\nSell a driver with auction option:\n/selldriver driver_id 0 auction"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=pagination_kb("market:auctions", page, total_pages)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "market:sell")
+async def market_sell_menu(callback: CallbackQuery):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("Register first!", show_alert=True)
+            return
+
+        from sqlalchemy import select
+        from src.models.models import TeamDriver, Driver
+        result = await db.execute(
+            select(TeamDriver, Driver)
+            .join(Driver, TeamDriver.driver_id == Driver.id)
+            .where(TeamDriver.team_id == team.id)
+        )
+        drivers = result.all()
+
+    if not drivers:
+        await callback.answer("No drivers to sell!", show_alert=True)
+        return
+
+    text = "📤 <b>Sell a Driver</b>\n\nYour drivers:\n\n"
+    for td, d in drivers:
+        text += (
+            f"<b>{safe(d.name)}</b> | Skill: {d.skill}/100\n"
+            f"  Direct sale: /selldriver {d.id} price\n"
+            f"  Auction: /selldriver {d.id} 0 auction\n\n"
+        )
+
+    text += "Example: /selldriver 5 8000000"
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:car:"))
+async def team_car_stats(callback: CallbackQuery):
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        team = await TeamService(db).get(team_id)
+        if not team:
+            await callback.answer("Team not found!", show_alert=True)
+            return
+
+        car_rating = (team.engine + team.aerodynamics + team.chassis +
+                      team.reliability + team.tyres + team.pit_crew) // 6
+
+        text = (
+            f"🚗 <b>Car Stats — {safe(team.name)}</b>\n\n"
+            f"Overall Rating: <b>{car_rating}/100</b>\n\n"
+            f"⚙️ Engine:       {team.engine}/100\n"
+            f"🌬️ Aerodynamics: {team.aerodynamics}/100\n"
+            f"🏗️ Chassis:      {team.chassis}/100\n"
+            f"🔧 Reliability:  {team.reliability}/100\n"
+            f"🛞 Tyres:        {team.tyres}/100\n"
+            f"🔩 Pit Crew:     {team.pit_crew}/100\n\n"
+            f"Use /upgrade to improve stats!"
+        )
+        await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:drivers:"))
+async def team_drivers_info(callback: CallbackQuery):
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        data = await TeamService(db).get_with_drivers(team_id)
+        drivers = data.get("drivers", [])
+
+        text = "👨‍🏎️ <b>Your Drivers</b>\n\n"
+        if not drivers:
+            text += "No drivers signed!\nUse /market to hire drivers."
+        else:
+            for d in drivers:
+                dr = d["driver"]
+                ct = d["contract"]
+                text += (
+                    f"<b>{safe(dr.name)}</b>\n"
+                    f"  Age: {dr.age} | {safe(dr.nationality)}\n"
+                    f"  Pace: {dr.pace} | Racecraft: {dr.racecraft}\n"
+                    f"  Consistency: {dr.consistency} | Wet: {dr.wet_weather}\n"
+                    f"  Salary: ${ct.salary:,}/yr\n\n"
+                )
+        await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:budget:"))
+async def team_budget_cb(callback: CallbackQuery):
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        team = await TeamService(db).get(team_id)
+        data = await TeamService(db).get_with_drivers(team_id)
+        driver_sal = sum(d["contract"].salary for d in data["drivers"])
+        staff_sal = sum(s["contract"].salary for s in data["staff"])
+
+        text = (
+            f"💰 <b>Budget — {safe(team.name)}</b>\n\n"
+            f"Available: <b>${team.budget:,}</b>\n\n"
+            f"Driver Salaries: ${driver_sal:,}\n"
+            f"Staff Salaries: ${staff_sal:,}\n"
+            f"Total Expenses: ${driver_sal + staff_sal:,}"
+        )
+        await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:facilities:"))
+async def team_facilities_cb(callback: CallbackQuery):
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        team = await TeamService(db).get(team_id)
+
+        text = (
+            f"🏭 <b>Facilities — {safe(team.name)}</b>\n\n"
+            f"🏭 Factory:     Level {team.factory_level}/5\n"
+            f"💨 Wind Tunnel: Level {team.wind_tunnel_level}/5 (+{team.wind_tunnel_level*5} RP/week)\n"
+            f"🖥️ Simulator:   Level {team.simulator_level}/5 (+{team.simulator_level*5} RP/week)\n"
+            f"🏢 HQ:          Level {team.hq_level}/5\n\n"
+            f"Upgrade costs:\n"
+            f"L1→L2: $10M | L2→L3: $25M\n"
+            f"L3→L4: $50M | L4→L5: $100M"
+        )
+        await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:staff:"))
+async def team_staff_cb(callback: CallbackQuery):
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        data = await TeamService(db).get_with_drivers(team_id)
+        staff = data.get("staff", [])
+
+        text = "👷 <b>Your Staff</b>\n\n"
+        if not staff:
+            text += "No staff hired!"
+        else:
+            for s in staff:
+                st = s["staff"]
+                text += (
+                    f"<b>{safe(st.name)}</b>\n"
+                    f"  Role: {st.role.replace('_', ' ').title()}\n"
+                    f"  Skill: {st.skill}/100\n"
+                    f"  Salary: ${s['contract'].salary:,}/yr\n\n"
+                )
+    await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:achievements:"))
+async def team_achievements_cb(callback: CallbackQuery):
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        from sqlalchemy import select
+        from src.models.models import TeamAchievement, Achievement
+        result = await db.execute(
+            select(TeamAchievement, Achievement)
+            .join(Achievement, TeamAchievement.achievement_id == Achievement.id)
+            .where(TeamAchievement.team_id == team_id)
+        )
+        achievements = result.all()
+
+        text = "🏅 <b>Achievements</b>\n\n"
+        if not achievements:
+            text += "No achievements yet!\nComplete races to earn them."
+        else:
+            for ta, a in achievements:
+                text += f"{a.icon} <b>{safe(a.name)}</b> — {safe(a.description)}\n"
+
+    await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("upgrade:menu:"))
+async def upgrade_menu_cb(callback: CallbackQuery):
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        team = await TeamService(db).get(team_id)
+        text = (
+            f"⬆️ <b>Upgrade Car — {safe(team.name)}</b>\n\n"
+            f"Budget: ${team.budget:,}\n\n"
+            f"Select stat to upgrade (+3 each):"
+        )
+    await callback.message.edit_text(text, reply_markup=upgrade_menu_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:menu:"))
+async def team_menu_cb(callback: CallbackQuery):
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        team = await TeamService(db).get(team_id)
+        await callback.message.edit_text(
+            f"🏎️ <b>{safe(team.name)}</b> — What would you like to view?",
+            reply_markup=team_menu_kb(team_id)
+        )
+    await callback.answer()
+
+
+# ─────────────────────────────────────────────
+# RENAME TEAM
+# ─────────────────────────────────────────────
+
+@router.message(Command("renameteam"))
+async def cmd_rename_team(message: Message, state: FSMContext):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Tumhara koi team nahi hai!")
+            return
+
+        await state.set_state(RenameTeamStates.waiting_newname)
+        await state.update_data(team_id=team.id, old_name=team.name)
+        await message.answer(
+            f"✏️ <b>Team Rename</b>\n\n"
+            f"Current name: <b>{safe(team.name)}</b>\n\n"
+            f"Naya naam type karo (3-30 characters):\n"
+            f"Cancel ke liye /start bhejo"
+        )
+
+
+@router.message(RenameTeamStates.waiting_newname)
+async def rename_team_confirm(message: Message, state: FSMContext):
+    new_name = message.text.strip()
+
+    if len(new_name) < 3:
+        await message.answer("❌ Naam bahut short hai! Min 3 characters.")
+        return
+    if len(new_name) > 30:
+        await message.answer("❌ Naam bahut lamba hai! Max 30 characters.")
+        return
+
+    data = await state.get_data()
+    team_id = data.get("team_id")
+    old_name = data.get("old_name")
+
+    async with get_session() as db:
+        team = await TeamService(db).get(team_id)
+        if not team:
+            await message.answer("❌ Team not found!")
+            await state.clear()
+            return
+
+        team.name = new_name
+        await state.clear()
+        await message.answer(
+            f"✅ <b>Team Renamed!</b>\n\n"
+            f"Old name: {safe(old_name)}\n"
+            f"New name: <b>{safe(new_name)}</b>\n\n"
+            f"🏎️ Welcome to {safe(new_name)}!"
+        )
 
 # ─────────────────────────────────────────────
 # DELETE TEAM

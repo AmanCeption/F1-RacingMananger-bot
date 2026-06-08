@@ -1,9 +1,7 @@
 aiogram==3.7.0
-sqlalchemy[asyncio]==2.0.30
-asyncpg==0.29.0
+SQLAlchemy==2.0.30
+asyncpg==0.28.0
 alembic==1.13.1
-apscheduler==3.10.4
-redis[asyncio]==5.0.4
+APScheduler==3.10.4
 python-dotenv==1.0.1
 aiohttp==3.9.5
-greenlet==3.0.3

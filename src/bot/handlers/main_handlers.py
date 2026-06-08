@@ -588,6 +588,67 @@ async def cmd_leagues(message: Message):
     )
 
 
+@router.callback_query(F.data == "league:create")
+async def cb_league_create(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.message.answer("❌ Register first with /register!")
+            return
+    await state.set_state(LeagueCreateStates.waiting_name)
+    await callback.message.answer("🏆 <b>Create a League</b>\n\nEnter your league name:")
+
+
+@router.callback_query(F.data == "league:join")
+async def cb_league_join(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.message.answer("❌ Register first with /register!")
+            return
+        if team.league_id:
+            await callback.message.answer("❌ You're already in a league! Use /leaveleague to leave first.")
+            return
+    await state.set_state(LeagueJoinStates.waiting_code)
+    await callback.message.answer("🔗 Enter the league invite code:")
+
+
+@router.callback_query(F.data == "league:public")
+async def cb_league_public(callback: CallbackQuery):
+    await callback.answer()
+    async with get_session() as db:
+        leagues = await LeagueService(db).get_public_leagues()
+    if not leagues:
+        await callback.message.answer("😔 No public leagues available right now.\nCreate one with /createleague!")
+        return
+    text = "🌍 <b>Public Leagues:</b>\n\n"
+    for lg in leagues[:10]:
+        text += f"🏆 <b>{safe(lg.name)}</b> — Code: <code>{lg.invite_code}</code>\n"
+    await callback.message.answer(text)
+
+
+@router.callback_query(F.data == "league:mine")
+async def cb_league_mine(callback: CallbackQuery):
+    await callback.answer()
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team or not team.league_id:
+            await callback.message.answer(
+                "❌ You're not in any league yet!\n"
+                "Use /joinleague or /createleague"
+            )
+            return
+        league = await LeagueService(db).get(team.league_id)
+    await callback.message.answer(
+        f"ℹ️ <b>Your League</b>\n\n"
+        f"🏆 Name: <b>{safe(league.name)}</b>\n"
+        f"🔑 Invite Code: <code>{league.invite_code}</code>\n"
+        f"{'🔒 Private' if league.password else '🌍 Public'}"
+    )
+
+
 @router.message(Command("createleague"))
 async def cmd_create_league(message: Message, state: FSMContext):
     async with get_session() as db:

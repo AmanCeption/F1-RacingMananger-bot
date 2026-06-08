@@ -117,18 +117,72 @@ async def cmd_forcerace(message: Message):
     try:
         league_id = int(parts[1])
     except ValueError:
-        await message.answer("Invalid league id")
+        await message.answer("❌ Invalid league id")
         return
 
-    await message.answer(f"Running race for league {league_id}...")
-    async with get_session() as db:
-        result = await RaceService(db).run_race(league_id)
-        if result:
-            events = result["events"][:15]
-            summary = "\n".join(events)
-            await message.answer(f"Race complete!\n\n{summary}")
-        else:
-            await message.answer("No race scheduled or failed.")
+    await message.answer(f"⏳ Running race for league {league_id}...")
+
+    try:
+        async with get_session() as db:
+            from sqlalchemy import select, and_
+            from src.models.models import League, Race, Team, RaceStatus, LeagueStatus
+
+            # Check league exists
+            league_res = await db.execute(select(League).where(League.id == league_id))
+            league = league_res.scalar_one_or_none()
+            if not league:
+                await message.answer(f"❌ League {league_id} not found!")
+                return
+
+            # Check league is active
+            if league.status != LeagueStatus.ACTIVE:
+                await message.answer(
+                    f"❌ League is not active! Status: <b>{league.status.value}</b>\n"
+                    f"Run /startseason first to start the season."
+                )
+                return
+
+            # Check teams exist
+            teams_res = await db.execute(select(Team).where(Team.league_id == league_id))
+            teams = teams_res.scalars().all()
+            if not teams:
+                await message.answer("❌ No teams in this league!")
+                return
+
+            # Check scheduled race exists
+            race_res = await db.execute(
+                select(Race).where(
+                    and_(Race.league_id == league_id, Race.status == RaceStatus.SCHEDULED)
+                ).order_by(Race.round.asc()).limit(1)
+            )
+            next_race = race_res.scalar_one_or_none()
+            if not next_race:
+                await message.answer(
+                    f"❌ No scheduled race found for league {league_id}!\n"
+                    f"All races may be finished. Check with /standings."
+                )
+                return
+
+            await message.answer(
+                f"🏎️ Starting: <b>Round {next_race.round} — {next_race.name}</b>\n"
+                f"Teams: {len(teams)} | Laps: {next_race.laps}"
+            )
+
+            result = await RaceService(db).run_race(league_id)
+
+            if result:
+                events = result.get("events", [])[:20]
+                summary = "\n".join(events)
+                results_list = result.get("results", [])
+                winner = results_list[0] if results_list else None
+                winner_text = f"\n\n🏆 Winner: <b>{winner.driver_name} ({winner.team_name})</b>" if winner else ""
+                await message.answer(f"✅ Race complete!{winner_text}\n\n{summary}")
+            else:
+                await message.answer("❌ Race simulation returned no result. Check logs.")
+
+    except Exception as e:
+        logger.error(f"forcerace error: {e}", exc_info=True)
+        await message.answer(f"❌ Error during race: <code>{str(e)}</code>")
 
 
 @router.message(Command("broadcast"))

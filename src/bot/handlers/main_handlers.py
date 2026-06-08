@@ -15,12 +15,17 @@ from src.services.game_services import (
 )
 from src.bot.keyboards.keyboards import (
     main_menu_kb, team_menu_kb, upgrade_menu_kb, strategy_kb,
-    tyre_selection_kb, market_kb, league_kb, research_kb, confirm_kb, pagination_kb
+    tyre_selection_kb, market_kb, league_kb, research_kb, pagination_kb
 )
 from src.core.config import settings, F1_POINTS
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def safe(text: str) -> str:
+    """Escape HTML special chars"""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 # ─────────────────────────────────────────────
@@ -45,6 +50,10 @@ class LeagueJoinStates(StatesGroup):
 
 class SellDriverStates(StatesGroup):
     waiting_price = State()
+
+
+class DeleteTeamStates(StatesGroup):
+    waiting_confirm = State()
 
 
 # ─────────────────────────────────────────────
@@ -844,8 +853,6 @@ DELETE TEAM HANDLER
 Yeh code main_handlers.py mein add karo:
 
 1. States section mein (top par jahan RegisterStates hai):
-   class DeleteTeamStates(StatesGroup):
-       waiting_confirm = State()
 
 2. Neeche handlers mein yeh do functions add karo
 """

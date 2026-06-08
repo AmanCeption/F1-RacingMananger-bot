@@ -619,13 +619,30 @@ async def cb_league_join(callback: CallbackQuery, state: FSMContext):
 async def cb_league_public(callback: CallbackQuery):
     await callback.answer()
     async with get_session() as db:
-        leagues = await LeagueService(db).get_public_leagues()
-    if not leagues:
+        leagues = await LeagueService(db).list_public()
+        league_data = []
+        for lg in leagues:
+            from sqlalchemy import select as sql_select, func as sql_func
+            from src.models.models import Team as TeamModel
+            count_result = await db.execute(
+                sql_select(sql_func.count(TeamModel.id)).where(TeamModel.league_id == lg.id)
+            )
+            member_count = count_result.scalar() or 0
+            league_data.append((lg, member_count))
+
+    if not league_data:
         await callback.message.answer("😔 No public leagues available right now.\nCreate one with /createleague!")
         return
+
     text = "🌍 <b>Public Leagues:</b>\n\n"
-    for lg in leagues[:10]:
-        text += f"🏆 <b>{safe(lg.name)}</b> — Code: <code>{lg.invite_code}</code>\n"
+    for lg, count in league_data:
+        status_icon = "🟢" if lg.status.value == "waiting" else "🔴"
+        text += (
+            f"{status_icon} <b>{safe(lg.name)}</b>\n"
+            f"  👥 Teams: {count}/{lg.max_teams}\n"
+            f"  🔑 Code: <code>{lg.invite_code}</code>\n\n"
+        )
+    text += "Use /joinleague to join with invite code!"
     await callback.message.answer(text)
 
 
@@ -640,13 +657,143 @@ async def cb_league_mine(callback: CallbackQuery):
                 "Use /joinleague or /createleague"
             )
             return
-        league = await LeagueService(db).get(team.league_id)
+
+        from sqlalchemy import select as sql_select
+        from src.models.models import League as LeagueModel, Team as TeamModel
+        league_result = await db.execute(
+            sql_select(LeagueModel).where(LeagueModel.id == team.league_id)
+        )
+        league = league_result.scalar_one_or_none()
+        if not league:
+            await callback.message.answer("❌ League not found!")
+            return
+
+        # Get all members
+        members_result = await db.execute(
+            sql_select(TeamModel).where(TeamModel.league_id == league.id)
+        )
+        members = members_result.scalars().all()
+
+    member_list = ""
+    for i, m in enumerate(members, 1):
+        you = " 👈 You" if m.id == team.id else ""
+        owner = " 👑" if m.owner_id == league.owner_id else ""
+        member_list += f"  {i}. {safe(m.name)}{owner}{you}\n"
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    builder = InlineKeyboardBuilder()
+    is_owner = league.owner_id == callback.from_user.id
+    if is_owner:
+        builder.row(InlineKeyboardButton(
+            text="🗑️ Delete League",
+            callback_data=f"league:delete_confirm:{league.id}"
+        ))
+
     await callback.message.answer(
         f"ℹ️ <b>Your League</b>\n\n"
         f"🏆 Name: <b>{safe(league.name)}</b>\n"
         f"🔑 Invite Code: <code>{league.invite_code}</code>\n"
-        f"{'🔒 Private' if league.password else '🌍 Public'}"
+        f"{'🔒 Private' if league.password else '🌍 Public'}\n"
+        f"📊 Status: {league.status.value.title()}\n"
+        f"👥 Teams ({len(members)}/{league.max_teams}):\n"
+        f"{member_list}",
+        reply_markup=builder.as_markup() if is_owner else None
     )
+
+
+@router.callback_query(F.data.startswith("league:delete_confirm:"))
+async def cb_league_delete_confirm(callback: CallbackQuery):
+    await callback.answer()
+    league_id = int(callback.data.split(":")[2])
+
+    async with get_session() as db:
+        from sqlalchemy import select as sql_select
+        from src.models.models import League as LeagueModel
+        result = await db.execute(sql_select(LeagueModel).where(LeagueModel.id == league_id))
+        league = result.scalar_one_or_none()
+        if not league:
+            await callback.message.answer("❌ League not found!")
+            return
+        if league.owner_id != callback.from_user.id:
+            await callback.message.answer("❌ Sirf league owner delete kar sakta hai!")
+            return
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Haan, Delete Karo", callback_data=f"league:delete_do:{league_id}"),
+        InlineKeyboardButton(text="❌ Cancel", callback_data="league:delete_cancel")
+    )
+
+    await callback.message.answer(
+        f"⚠️ <b>League Delete Karna Chahte Ho?</b>\n\n"
+        f"🏆 League: <b>{safe(league.name)}</b>\n\n"
+        f"❗ Yeh permanent hai! Saare members league se remove ho jayenge.\n\n"
+        f"Confirm karo:",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("league:delete_do:"))
+async def cb_league_delete_do(callback: CallbackQuery):
+    await callback.answer()
+    league_id = int(callback.data.split(":")[2])
+
+    async with get_session() as db:
+        from sqlalchemy import select as sql_select, delete as sql_delete
+        from src.models.models import (
+            League as LeagueModel, Team as TeamModel,
+            Race, RaceResult, RaceStrategy, ConstructorStanding,
+            DriverStanding, Season
+        )
+
+        result = await db.execute(sql_select(LeagueModel).where(LeagueModel.id == league_id))
+        league = result.scalar_one_or_none()
+        if not league:
+            await callback.message.answer("❌ League not found!")
+            return
+        if league.owner_id != callback.from_user.id:
+            await callback.message.answer("❌ Permission denied!")
+            return
+
+        league_name = league.name
+
+        # Saare teams ko league se remove karo
+        await db.execute(
+            TeamModel.__table__.update()
+            .where(TeamModel.league_id == league_id)
+            .values(league_id=None)
+        )
+
+        # Related data delete karo
+        races_result = await db.execute(
+            sql_select(Race.id).where(Race.league_id == league_id)
+        )
+        race_ids = [r[0] for r in races_result.all()]
+
+        if race_ids:
+            await db.execute(sql_delete(RaceResult).where(RaceResult.race_id.in_(race_ids)))
+            await db.execute(sql_delete(RaceStrategy).where(RaceStrategy.race_id.in_(race_ids)))
+
+        await db.execute(sql_delete(ConstructorStanding).where(ConstructorStanding.league_id == league_id))
+        await db.execute(sql_delete(DriverStanding).where(DriverStanding.league_id == league_id))
+        await db.execute(sql_delete(Season).where(Season.league_id == league_id))
+        await db.execute(sql_delete(Race).where(Race.league_id == league_id))
+        await db.execute(sql_delete(LeagueModel).where(LeagueModel.id == league_id))
+
+    await callback.message.edit_text(
+        f"✅ <b>League Delete Ho Gayi!</b>\n\n"
+        f"<b>{safe(league_name)}</b> permanently delete ho gayi.\n"
+        f"Saare members ab free hain naya league join karne ke liye."
+    )
+
+
+@router.callback_query(F.data == "league:delete_cancel")
+async def cb_league_delete_cancel(callback: CallbackQuery):
+    await callback.answer("Cancelled ✅")
+    await callback.message.edit_text("❌ League delete cancel ho gayi.")
 
 
 @router.message(Command("createleague"))

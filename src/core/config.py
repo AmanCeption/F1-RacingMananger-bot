@@ -1,50 +1,44 @@
 """
-Configuration Management
+Configuration - pydantic-free version for Render compatibility
 """
-from pydantic_settings import BaseSettings
-from pydantic import Field
-from typing import Optional
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def _parse_admin_ids(raw: str) -> list[int]:
+    raw = raw.strip().strip("[]")
+    if not raw:
+        return []
+    return [int(x.strip()) for x in raw.split(",") if x.strip()]
 
 
-class Settings(BaseSettings):
-    # Bot
-    BOT_TOKEN: str = Field(..., env="BOT_TOKEN")
-    ADMIN_IDS: list[int] = Field(default=[], env="ADMIN_IDS")
-    
-    # Database
-    DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://f1bot:f1bot@localhost:5432/f1bot",
-        env="DATABASE_URL"
+class Settings:
+    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    ADMIN_IDS: list[int] = _parse_admin_ids(os.getenv("ADMIN_IDS", "[]"))
+
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://f1bot:f1bot@localhost:5432/f1bot"
     )
-    
-    # Redis
-    REDIS_URL: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")
-    
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
     # Game Settings
-    STARTING_BUDGET: int = Field(default=100_000_000, env="STARTING_BUDGET")
-    MAX_TEAMS_PER_LEAGUE: int = Field(default=20, env="MAX_TEAMS_PER_LEAGUE")
-    SEASON_RACES: int = Field(default=24, env="SEASON_RACES")
-    WEEKLY_RESEARCH_POINTS: int = Field(default=50, env="WEEKLY_RESEARCH_POINTS")
-    DAILY_REWARD_MONEY: int = Field(default=500_000, env="DAILY_REWARD_MONEY")
-    DAILY_REWARD_RP: int = Field(default=10, env="DAILY_REWARD_RP")
-    
-    # Race Schedule (UTC)
-    RACE_HOUR: int = Field(default=14, env="RACE_HOUR")
-    RACE_MINUTE: int = Field(default=0, env="RACE_MINUTE")
-    
-    # Anti-Cheat
-    COMMAND_COOLDOWN: int = Field(default=3, env="COMMAND_COOLDOWN")  # seconds
-    MAX_COMMANDS_PER_MINUTE: int = Field(default=20, env="MAX_COMMANDS_PER_MINUTE")
-    
-    # Logging
-    LOG_LEVEL: str = Field(default="INFO", env="LOG_LEVEL")
-    LOG_FILE: str = Field(default="logs/bot.log", env="LOG_FILE")
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
+    STARTING_BUDGET: int = int(os.getenv("STARTING_BUDGET", "100000000"))
+    MAX_TEAMS_PER_LEAGUE: int = int(os.getenv("MAX_TEAMS_PER_LEAGUE", "20"))
+    SEASON_RACES: int = int(os.getenv("SEASON_RACES", "24"))
+    WEEKLY_RESEARCH_POINTS: int = int(os.getenv("WEEKLY_RESEARCH_POINTS", "50"))
+    DAILY_REWARD_MONEY: int = int(os.getenv("DAILY_REWARD_MONEY", "500000"))
+    DAILY_REWARD_RP: int = int(os.getenv("DAILY_REWARD_RP", "10"))
+
+    RACE_HOUR: int = int(os.getenv("RACE_HOUR", "14"))
+    RACE_MINUTE: int = int(os.getenv("RACE_MINUTE", "0"))
+
+    COMMAND_COOLDOWN: int = int(os.getenv("COMMAND_COOLDOWN", "3"))
+    MAX_COMMANDS_PER_MINUTE: int = int(os.getenv("MAX_COMMANDS_PER_MINUTE", "20"))
+
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FILE: str = os.getenv("LOG_FILE", "logs/bot.log")
 
 
 settings = Settings()
@@ -55,7 +49,7 @@ F1_POINTS = {
     6: 8, 7: 6, 8: 4, 9: 2, 10: 1
 }
 
-# F1 Calendar 2024 Tracks
+# F1 Calendar
 F1_CALENDAR = [
     {"name": "Bahrain Grand Prix", "circuit": "Bahrain International Circuit", "laps": 57, "country": "🇧🇭"},
     {"name": "Saudi Arabian Grand Prix", "circuit": "Jeddah Corniche Circuit", "laps": 50, "country": "🇸🇦"},
@@ -83,7 +77,6 @@ F1_CALENDAR = [
     {"name": "Abu Dhabi Grand Prix", "circuit": "Yas Marina Circuit", "laps": 58, "country": "🇦🇪"},
 ]
 
-# Tyre Compounds
 TYRE_DATA = {
     "soft":  {"pace": 1.0, "wear_rate": 0.035, "color": "🔴"},
     "medium": {"pace": 0.97, "wear_rate": 0.022, "color": "🟡"},

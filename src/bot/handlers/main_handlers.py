@@ -494,7 +494,7 @@ async def market_free_agents(callback: CallbackQuery):
 async def cmd_buy_driver(message: Message):
     parts = message.text.split()
     if len(parts) < 2:
-        await message.answer("Usage: /buydriver <driver_id>")
+        await message.answer("Usage: /buydriver driver_id")
         return
 
     try:
@@ -517,7 +517,7 @@ async def cmd_buy_driver(message: Message):
 async def cmd_sell_driver(message: Message):
     parts = message.text.split()
     if len(parts) < 2:
-        await message.answer("Usage: /selldriver <driver_id> [price]\n\nAdd 'auction' for auction listing")
+        await message.answer("Usage: /selldriver driver_id [price]\n\nAdd 'auction' for auction listing")
         return
 
     try:
@@ -838,4 +838,91 @@ async def cmd_help(message: Message):
         "/daily — Claim daily reward\n"
         "/achievements — View achievements\n\n"
         "🏎️ <b>Good luck on track!</b>"
+    )
+"""
+DELETE TEAM HANDLER
+Yeh code main_handlers.py mein add karo:
+
+1. States section mein (top par jahan RegisterStates hai):
+   class DeleteTeamStates(StatesGroup):
+       waiting_confirm = State()
+
+2. Neeche handlers mein yeh do functions add karo
+"""
+
+# ─────────────────────────────────────────────
+# DELETE TEAM
+# ─────────────────────────────────────────────
+
+@router.message(Command("deleteteam"))
+async def cmd_delete_team(message: Message, state: FSMContext):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Tumhara koi team nahi hai!")
+            return
+
+        await state.set_state(DeleteTeamStates.waiting_confirm)
+        await state.update_data(team_id=team.id, team_name=team.name)
+        await message.answer(
+            f"⚠️ <b>Team Delete Karna Chahte Ho?</b>\n\n"
+            f"Team: <b>{safe(team.name)}</b>\n"
+            f"Budget: ${team.budget:,}\n\n"
+            f"❗ Yeh permanent hai! Sab kuch delete hoga:\n"
+            f"Drivers, staff, sponsors, achievements\n\n"
+            f"Confirm karne ke liye team ka exact naam type karo:\n"
+            f"<code>{safe(team.name)}</code>\n\n"
+            f"Cancel karne ke liye /start bhejo"
+        )
+
+@router.message(DeleteTeamStates.waiting_confirm)
+async def delete_team_confirm(message: Message, state: FSMContext):
+    data = await state.get_data()
+    team_name = data.get("team_name", "")
+    team_id = data.get("team_id")
+
+    if message.text.strip() != team_name:
+        await message.answer(
+            f"❌ Naam match nahi hua!\n\n"
+            f"Exactly yeh type karo: <code>{safe(team_name)}</code>\n"
+            f"Ya cancel ke liye /start"
+        )
+        return
+
+    async with get_session() as db:
+        from sqlalchemy import delete as sql_delete
+        from src.models.models import (
+            TeamDriver, TeamStaff, TeamSponsor,
+            RaceResult, TeamAchievement, RaceStrategy,
+            ConstructorStanding, DriverStanding, ResearchProject
+        )
+
+        # Sab related data delete karo
+        await db.execute(sql_delete(TeamDriver).where(TeamDriver.team_id == team_id))
+        await db.execute(sql_delete(TeamStaff).where(TeamStaff.team_id == team_id))
+        await db.execute(sql_delete(TeamSponsor).where(TeamSponsor.team_id == team_id))
+        await db.execute(sql_delete(RaceResult).where(RaceResult.team_id == team_id))
+        await db.execute(sql_delete(RaceStrategy).where(RaceStrategy.team_id == team_id))
+        await db.execute(sql_delete(TeamAchievement).where(TeamAchievement.team_id == team_id))
+        await db.execute(sql_delete(ResearchProject).where(ResearchProject.team_id == team_id))
+        await db.execute(sql_delete(ConstructorStanding).where(ConstructorStanding.team_id == team_id))
+
+        # Team delete
+        from sqlalchemy import select as sql_select
+        from src.models.models import Team
+        result = await db.execute(sql_select(Team).where(Team.id == team_id))
+        team = result.scalar_one_or_none()
+        if team:
+            # Free agents wapas karo
+            for td_result in await db.execute(
+                sql_select(TeamDriver).where(TeamDriver.team_id == team_id)
+            ):
+                pass  # already deleted above
+            await db.delete(team)
+
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Team Delete Ho Gayi!</b>\n\n"
+        f"<b>{safe(team_name)}</b> permanently delete ho gayi.\n\n"
+        f"Naya team banana chahte ho? /register karo 🏎️"
     )

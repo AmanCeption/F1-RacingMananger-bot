@@ -591,11 +591,11 @@ class RaceService:
             # Update team stats
             team = next((t for t in teams if t.id == car.team_id), None)
             if team and not car.is_dnf:
-                team.total_points += points
+                team.total_points = (team.total_points or 0) + points
                 if car.position == 1:
-                    team.wins += 1
-                if car.position <= 3:
-                    team.podiums += 1
+                    team.wins = (team.wins or 0) + 1
+                if car.position and car.position <= 3:
+                    team.podiums = (team.podiums or 0) + 1
 
             # Update constructor standings
             await self._update_constructor_standing(league_id, race.season, car.team_id, points)
@@ -641,13 +641,17 @@ class RaceService:
         )
         standing = result.scalar_one_or_none()
         if not standing:
-            standing = ConstructorStanding(league_id=league_id, season=season, team_id=team_id)
+            standing = ConstructorStanding(
+                league_id=league_id, season=season, team_id=team_id,
+                points=0, wins=0, podiums=0
+            )
             self.db.add(standing)
-        standing.points += points
+            await self.db.flush()
+        standing.points = (standing.points or 0) + points
         if points >= 25:
-            standing.wins += 1
+            standing.wins = (standing.wins or 0) + 1
         if points >= 15:
-            standing.podiums += 1
+            standing.podiums = (standing.podiums or 0) + 1
 
     async def _update_driver_standing(self, league_id, season, driver_id, team_id, points,
                                        is_win, is_podium, is_fl):
@@ -660,16 +664,20 @@ class RaceService:
         )
         standing = result.scalar_one_or_none()
         if not standing:
-            standing = DriverStanding(league_id=league_id, season=season,
-                                       driver_id=driver_id, team_id=team_id)
+            standing = DriverStanding(
+                league_id=league_id, season=season,
+                driver_id=driver_id, team_id=team_id,
+                points=0, wins=0, podiums=0, poles=0, fastest_laps=0
+            )
             self.db.add(standing)
-        standing.points += points
+            await self.db.flush()
+        standing.points = (standing.points or 0) + points
         if is_win:
-            standing.wins += 1
+            standing.wins = (standing.wins or 0) + 1
         if is_podium:
-            standing.podiums += 1
+            standing.podiums = (standing.podiums or 0) + 1
         if is_fl:
-            standing.fastest_laps += 1
+            standing.fastest_laps = (standing.fastest_laps or 0) + 1
 
     async def _process_sponsors(self, team_id: int, position: Optional[int]):
         sponsors_result = await self.db.execute(

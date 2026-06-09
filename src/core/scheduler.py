@@ -1,5 +1,5 @@
 """
-Scheduler - Race automation, weekly RP grants
+Scheduler - Race automation, weekly RP grants, notifications
 """
 import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -11,6 +11,7 @@ from src.core.database.session import get_session
 from src.core.config import settings
 from src.models.models import League, Team, LeagueStatus
 from src.services.game_services import RaceService
+from src.services.notification_service import send_race_reminders, send_daily_reminders
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,6 @@ async def weekly_research_points(bot: Bot):
         result = await db.execute(select(Team))
         teams = result.scalars().all()
         for team in teams:
-            # Facility bonus
             bonus = team.wind_tunnel_level * 5 + team.simulator_level * 5
             team.research_points += settings.WEEKLY_RESEARCH_POINTS + bonus
         await db.commit()
@@ -53,21 +53,49 @@ async def weekly_research_points(bot: Bot):
 async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
 
-    # Race every Sunday at 14:00 UTC
+    # ── Race (Sunday at RACE_HOUR:RACE_MINUTE UTC) ──
     scheduler.add_job(
         auto_run_races,
-        CronTrigger(day_of_week="sun", hour=settings.RACE_HOUR, minute=settings.RACE_MINUTE),
+        CronTrigger(
+            day_of_week="sun",
+            hour=settings.RACE_HOUR,
+            minute=settings.RACE_MINUTE,
+        ),
         args=[bot],
         id="auto_race",
         replace_existing=True,
     )
 
-    # Weekly RP every Monday at 00:00 UTC
+    # ── Race Reminder (1 hour before race) ──
+    reminder_hour = settings.RACE_HOUR - 1 if settings.RACE_HOUR > 0 else 23
+    reminder_day = "sun" if settings.RACE_HOUR > 0 else "sat"
+    scheduler.add_job(
+        send_race_reminders,
+        CronTrigger(
+            day_of_week=reminder_day,
+            hour=reminder_hour,
+            minute=settings.RACE_MINUTE,
+        ),
+        args=[bot],
+        id="race_reminder",
+        replace_existing=True,
+    )
+
+    # ── Weekly RP (Monday 00:00 UTC) ──
     scheduler.add_job(
         weekly_research_points,
         CronTrigger(day_of_week="mon", hour=0, minute=0),
         args=[bot],
         id="weekly_rp",
+        replace_existing=True,
+    )
+
+    # ── Daily Reward Reminder (every day at 10:00 UTC) ──
+    scheduler.add_job(
+        send_daily_reminders,
+        CronTrigger(hour=10, minute=0),
+        args=[bot],
+        id="daily_reminder",
         replace_existing=True,
     )
 

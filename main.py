@@ -35,6 +35,24 @@ async def run_migrations():
             await conn.execute(text(
                 "ALTER TABLE staff ADD COLUMN IF NOT EXISTS specialty VARCHAR(64)"
             ))
+            # Fix cascade deletes for team-related tables
+            cascade_tables = [
+                "race_results", "race_strategies", "qualifying_results",
+                "team_drivers", "team_staff", "team_sponsors",
+                "research_projects", "team_achievements",
+                "driver_standings", "constructor_standings",
+            ]
+            for table in cascade_tables:
+                try:
+                    await conn.execute(text(f"""
+                        DO $$ BEGIN
+                            ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_team_id_fkey;
+                            ALTER TABLE {table} ADD CONSTRAINT {table}_team_id_fkey
+                                FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE;
+                        END $$;
+                    """))
+                except Exception:
+                    pass  # table may not exist yet
         logger.info("✅ Migrations applied successfully")
     except Exception as e:
         logger.warning(f"Migration warning (non-fatal): {e}")

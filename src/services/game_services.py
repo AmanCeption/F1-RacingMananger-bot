@@ -208,14 +208,7 @@ class TeamService:
         team = await self.get_by_owner(owner_id)
         if not team:
             return False, "Team not found!"
-        if team.league_id:
-            from src.models.models import League, LeagueStatus
-            league_result = await self.db.execute(
-                select(League).where(League.id == team.league_id)
-            )
-            league = league_result.scalar_one_or_none()
-            if league and league.status == LeagueStatus.ACTIVE:
-                return False, "Cannot delete team during an active league season!"
+        # Allow delete anytime — team leaves league automatically
         await self.db.delete(team)
         await self.db.flush()
         return True, "Team deleted."
@@ -406,9 +399,6 @@ class LeagueService:
 
         if league.owner_id == team.owner_id:
             return False, "You are the league owner! Delete the league first."
-
-        if league.status == LeagueStatus.ACTIVE and not force:
-            return False, "Cannot leave a league mid-season!"
 
         team.league_id = None
         await self.db.flush()

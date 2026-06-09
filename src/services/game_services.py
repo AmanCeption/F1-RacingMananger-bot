@@ -348,7 +348,7 @@ class LeagueService:
         )
         return result.scalars().all()
 
-    async def leave(self, team_id: int) -> tuple[bool, str]:
+    async def leave(self, team_id: int, force: bool = False) -> tuple[bool, str]:
         team = await TeamService(self.db).get(team_id)
         if not team or not team.league_id:
             return False, "You are not in any league!"
@@ -361,21 +361,21 @@ class LeagueService:
         if league.owner_id == team.owner_id:
             return False, "You are the league owner! Delete the league first."
 
-        if league.status == LeagueStatus.ACTIVE:
+        if league.status == LeagueStatus.ACTIVE and not force:
             return False, "Cannot leave a league mid-season!"
 
         team.league_id = None
         await self.db.flush()
         return True, f"You have left {league.name}."
 
-    async def delete(self, owner_id: int, league_id: int) -> tuple[bool, str]:
+    async def delete(self, owner_id: int, league_id: int, force: bool = False) -> tuple[bool, str]:
         result = await self.db.execute(select(League).where(League.id == league_id))
         league = result.scalar_one_or_none()
         if not league:
             return False, "League not found!"
         if league.owner_id != owner_id:
             return False, "You are not the league owner!"
-        if league.status == LeagueStatus.ACTIVE:
+        if league.status == LeagueStatus.ACTIVE and not force:
             return False, "Cannot delete a league during an active season!"
 
         await self.db.execute(

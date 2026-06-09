@@ -266,7 +266,7 @@ class Race(Base):
     __tablename__ = "races"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    league_id: Mapped[int] = mapped_column(Integer, ForeignKey("leagues.id"))
+    league_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("leagues.id", ondelete="SET NULL"), nullable=True)
     season: Mapped[int] = mapped_column(Integer, default=1)
     round: Mapped[int] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String(64))

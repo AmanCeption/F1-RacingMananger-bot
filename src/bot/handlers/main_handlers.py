@@ -859,3 +859,343 @@ async def cmd_firestaff(message: Message):
         f"They are now available in the market again.",
         parse_mode="HTML"
     )
+
+
+# ─────────────────────────────────────────────
+# TEAM MENU CALLBACKS (inline buttons)
+# ─────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("team:menu:"))
+async def cb_team_menu(callback: CallbackQuery):
+    """Back to team menu"""
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+        data = await TeamService(db).get_with_drivers(team.id)
+        drivers = data.get("drivers", [])
+        staff = data.get("staff", [])
+        sponsors = data.get("sponsors", [])
+
+        driver_text = ""
+        for d in drivers:
+            dr = d["driver"]
+            driver_text += f"\n  🏎️ {safe(dr.name)} ({safe(dr.nationality)}) | Skill: {dr.skill}/100"
+        if not driver_text:
+            driver_text = "\n  ⚠️ No drivers signed!"
+
+        staff_text = ""
+        for s in staff:
+            st = s["staff"]
+            staff_text += f"\n  👤 {safe(st.name)} ({_role_label(st.role)})"
+        if not staff_text:
+            staff_text = "\n  ⚠️ No staff hired!"
+
+        car_rating = (team.engine + team.aerodynamics + team.chassis +
+                      team.reliability + team.tyres + team.pit_crew) // 6
+
+        text = (
+            f"🏎️ <b>{safe(team.name)}</b>\n\n"
+            f"💰 Budget: <b>${team.budget:,}</b>\n"
+            f"⭐ Reputation: <b>{team.reputation}/100</b>\n"
+            f"🔬 Research Points: <b>{team.research_points}</b>\n"
+            f"🏆 Total Points: <b>{team.total_points}</b>\n"
+            f"🥇 Wins: {team.wins} | 🥉 Podiums: {team.podiums}\n\n"
+            f"🚗 <b>Car Rating: {car_rating}/100</b>\n"
+            f"  ⚙️ Engine: {team.engine} | 🌬️ Aero: {team.aerodynamics}\n"
+            f"  🏗️ Chassis: {team.chassis} | 🔧 Reliability: {team.reliability}\n"
+            f"  🛞 Tyres: {team.tyres} | 🔩 Pit Crew: {team.pit_crew}\n\n"
+            f"<b>Drivers:</b>{driver_text}\n\n"
+            f"<b>Staff:</b>{staff_text}\n\n"
+            f"<b>Active Sponsors:</b> {len(sponsors)}"
+        )
+    await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:car:"))
+async def cb_team_car(callback: CallbackQuery):
+    """Show car stats"""
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+
+        car_rating = (team.engine + team.aerodynamics + team.chassis +
+                      team.reliability + team.tyres + team.pit_crew) // 6
+
+        def bar(val):
+            filled = val // 10
+            return "█" * filled + "░" * (10 - filled)
+
+        text = (
+            f"🏎️ <b>Car Stats — {safe(team.name)}</b>\n\n"
+            f"Overall Rating: <b>{car_rating}/100</b>\n\n"
+            f"⚙️ Engine\n"
+            f"  {bar(team.engine)} {team.engine}/100\n\n"
+            f"🌬️ Aerodynamics\n"
+            f"  {bar(team.aerodynamics)} {team.aerodynamics}/100\n\n"
+            f"🏗️ Chassis\n"
+            f"  {bar(team.chassis)} {team.chassis}/100\n\n"
+            f"🔧 Reliability\n"
+            f"  {bar(team.reliability)} {team.reliability}/100\n\n"
+            f"🛞 Tyres\n"
+            f"  {bar(team.tyres)} {team.tyres}/100\n\n"
+            f"🔩 Pit Crew\n"
+            f"  {bar(team.pit_crew)} {team.pit_crew}/100\n\n"
+            f"💡 Use ⬆️ Upgrade Car to improve stats."
+        )
+    await callback.message.edit_text(text, reply_markup=team_menu_kb(team.id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:drivers:"))
+async def cb_team_drivers(callback: CallbackQuery):
+    """Show drivers"""
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+
+        data = await TeamService(db).get_with_drivers(team.id)
+        drivers = data.get("drivers", [])
+
+        if not drivers:
+            text = (
+                f"👨‍🏎️ <b>Drivers — {safe(team.name)}</b>\n\n"
+                f"⚠️ No drivers signed!\n\n"
+                f"Use /market to browse and sign drivers."
+            )
+        else:
+            text = f"👨‍🏎️ <b>Drivers — {safe(team.name)}</b>\n\n"
+            for i, d in enumerate(drivers, 1):
+                dr = d["driver"]
+                contract = d["contract"]
+                slot = "Driver 1" if contract.is_primary else "Driver 2"
+                overall = (dr.skill + dr.pace + dr.racecraft + dr.consistency) // 4
+                text += (
+                    f"{'🥇' if contract.is_primary else '🥈'} <b>{safe(dr.name)}</b> [{slot}]\n"
+                    f"  🌍 {safe(dr.nationality)} | 🎂 Age: {dr.age}\n"
+                    f"  ⭐ Overall: {overall}/100\n"
+                    f"  🏎️ Pace: {dr.pace} | 🎯 Racecraft: {dr.racecraft}\n"
+                    f"  📊 Consistency: {dr.consistency} | 🌧️ Wet: {dr.wet_weather}\n"
+                    f"  ⚡ Overtaking: {dr.overtaking} | 🛡️ Defence: {dr.defence}\n"
+                    f"  💰 Salary: ${contract.salary:,}/yr\n"
+                    f"  🏆 Career Wins: {dr.career_wins} | Poles: {dr.career_poles}\n\n"
+                )
+            text += "Use /selldriver &lt;id&gt; to transfer a driver."
+
+    await callback.message.edit_text(text, reply_markup=team_menu_kb(team.id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:staff:"))
+async def cb_team_staff(callback: CallbackQuery):
+    """Show staff"""
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+
+        staff_result = await db.execute(
+            select(TeamStaff, Staff)
+            .join(Staff, TeamStaff.staff_id == Staff.id)
+            .where(TeamStaff.team_id == team.id)
+        )
+        staff_list = staff_result.all()
+
+    if not staff_list:
+        text = (
+            f"👷 <b>Staff — {safe(team.name)}</b>\n\n"
+            f"⚠️ No staff hired!\n\n"
+            f"Use /staffmarket to hire staff.\n"
+            f"Staff boost your car performance every race."
+        )
+    else:
+        total_salary = sum(ts.salary for ts, s in staff_list)
+        total_bonus = 1.0
+        for ts, s in staff_list:
+            total_bonus *= s.performance_bonus
+        total_bonus = min(1.25, total_bonus)
+
+        text = f"👷 <b>Staff — {safe(team.name)}</b>\n\n"
+        for ts, s in staff_list:
+            real_badge = " ⭐" if getattr(s, "is_real", False) else ""
+            text += (
+                f"{_role_emoji(s.role)} <b>{safe(s.name)}</b>{real_badge}\n"
+                f"  {_role_label(s.role)} | Skill: {s.skill}/100\n"
+                f"  Bonus: +{round((s.performance_bonus - 1) * 100, 1)}% | "
+                f"Salary: ${ts.salary:,}\n\n"
+            )
+        text += (
+            f"💰 Total Wages: ${total_salary:,}/season\n"
+            f"📈 Combined Bonus: +{round((total_bonus - 1) * 100, 1)}%\n\n"
+            f"Use /staffmarket to hire more."
+        )
+
+    await callback.message.edit_text(text, reply_markup=team_menu_kb(team.id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:facilities:"))
+async def cb_team_facilities(callback: CallbackQuery):
+    """Show facilities"""
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+
+    upgrade_costs = {1: 10_000_000, 2: 25_000_000, 3: 50_000_000, 4: 100_000_000}
+
+    def facility_info(level):
+        if level >= 5:
+            return "MAX LEVEL ✅"
+        cost = upgrade_costs.get(level, 100_000_000)
+        return f"Level {level}/5 | Upgrade: ${cost:,}"
+
+    def stars(level):
+        return "⭐" * level + "☆" * (5 - level)
+
+    text = (
+        f"🏭 <b>Facilities — {safe(team.name)}</b>\n\n"
+        f"🏗️ <b>Factory</b>\n"
+        f"  {stars(team.factory_level)} | {facility_info(team.factory_level)}\n"
+        f"  Boosts: Car development speed\n\n"
+        f"💨 <b>Wind Tunnel</b>\n"
+        f"  {stars(team.wind_tunnel_level)} | {facility_info(team.wind_tunnel_level)}\n"
+        f"  Boosts: Aerodynamics upgrades\n\n"
+        f"🖥️ <b>Simulator</b>\n"
+        f"  {stars(team.simulator_level)} | {facility_info(team.simulator_level)}\n"
+        f"  Boosts: Driver consistency\n\n"
+        f"🏢 <b>HQ</b>\n"
+        f"  {stars(team.hq_level)} | {facility_info(team.hq_level)}\n"
+        f"  Boosts: Overall team performance\n\n"
+        f"💰 Budget: ${team.budget:,}\n\n"
+        f"Use /upgrade to develop facilities."
+    )
+
+    await callback.message.edit_text(text, reply_markup=team_menu_kb(team.id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:budget:"))
+async def cb_team_budget(callback: CallbackQuery):
+    """Show budget breakdown"""
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+
+        data = await TeamService(db).get_with_drivers(team.id)
+        drivers = data.get("drivers", [])
+        staff = data.get("staff", [])
+        sponsors = data.get("sponsors", [])
+
+        driver_salaries = sum(d["contract"].salary for d in drivers)
+        staff_salaries = sum(s["contract"].salary for s in staff)
+        sponsor_income = sum(sp["sponsor"].reward for sp in sponsors if sp["contract"].is_active)
+        total_expenses = driver_salaries + staff_salaries
+
+    text = (
+        f"💰 <b>Budget — {safe(team.name)}</b>\n\n"
+        f"🏦 Available: <b>${team.budget:,}</b>\n\n"
+        f"📤 <b>Expenses (per season):</b>\n"
+        f"  👨‍🏎️ Driver Salaries: ${driver_salaries:,}\n"
+        f"  👷 Staff Salaries: ${staff_salaries:,}\n"
+        f"  ─────────────────\n"
+        f"  Total Out: ${total_expenses:,}\n\n"
+        f"📥 <b>Income:</b>\n"
+        f"  🏆 Active Sponsor Rewards: ${sponsor_income:,}\n"
+        f"  🎁 Daily Reward: $500,000\n"
+        f"  🏁 Race Prize (win): up to $5,000,000\n\n"
+        f"💡 <b>Tips:</b>\n"
+        f"  • Use /daily every 24h\n"
+        f"  • Win races for big prize money\n"
+        f"  • Sign sponsors via /sponsors"
+    )
+
+    await callback.message.edit_text(text, reply_markup=team_menu_kb(team.id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:achievements:"))
+async def cb_team_achievements(callback: CallbackQuery):
+    """Show achievements"""
+    from src.models.models import TeamAchievement, Achievement
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+
+        result = await db.execute(
+            select(TeamAchievement, Achievement)
+            .join(Achievement, TeamAchievement.achievement_id == Achievement.id)
+            .where(TeamAchievement.team_id == team.id)
+            .order_by(TeamAchievement.earned_at.desc())
+        )
+        earned = result.all()
+
+    if not earned:
+        text = (
+            f"🏅 <b>Achievements — {safe(team.name)}</b>\n\n"
+            f"No achievements yet!\n\n"
+            f"🏆 How to earn achievements:\n"
+            f"  • Win your first race\n"
+            f"  • Get a podium finish\n"
+            f"  • Secure pole position\n"
+            f"  • Win in the rain\n"
+            f"  • Win the championship\n\n"
+            f"Get racing to unlock them! 🏁"
+        )
+    else:
+        text = f"🏅 <b>Achievements — {safe(team.name)}</b>\n\n"
+        total_money = sum(a.reward_money for ta, a in earned)
+        total_rp = sum(a.reward_rp for ta, a in earned)
+        for ta, a in earned:
+            text += (
+                f"{a.icon} <b>{safe(a.name)}</b>\n"
+                f"  {safe(a.description)}\n"
+                f"  Earned: {ta.earned_at.strftime('%d %b %Y')}\n\n"
+            )
+        text += (
+            f"Total: <b>{len(earned)}</b> achievement(s)\n"
+            f"Rewards earned: ${total_money:,} + {total_rp} RP"
+        )
+
+    await callback.message.edit_text(text, reply_markup=team_menu_kb(team.id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("upgrade:menu:"))
+async def cb_upgrade_menu(callback: CallbackQuery):
+    """Show upgrade car menu"""
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+
+        text = (
+            f"⬆️ <b>Upgrade Car — {safe(team.name)}</b>\n\n"
+            f"Current Stats:\n"
+            f"⚙️ Engine:       {team.engine}/100  (+3 costs $8,000,000)\n"
+            f"🌬️ Aerodynamics: {team.aerodynamics}/100  (+3 costs $7,000,000)\n"
+            f"🏗️ Chassis:      {team.chassis}/100  (+3 costs $7,000,000)\n"
+            f"🔧 Reliability:  {team.reliability}/100  (+3 costs $5,000,000)\n"
+            f"🛞 Tyres:        {team.tyres}/100  (+3 costs $4,000,000)\n"
+            f"🔩 Pit Crew:     {team.pit_crew}/100  (+3 costs $3,000,000)\n\n"
+            f"💰 Available: <b>${team.budget:,}</b>\n\n"
+            f"Select a stat to upgrade:"
+        )
+
+    await callback.message.edit_text(text, reply_markup=upgrade_menu_kb(team_id))
+    await callback.answer()

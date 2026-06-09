@@ -692,9 +692,9 @@ class RaceService:
         next_race_result = await self.db.execute(
             select(Race).where(
                 and_(Race.league_id == league_id, Race.status == RaceStatus.SCHEDULED)
-            ).order_by(Race.race_number)
+            ).order_by(Race.round.asc()).limit(1)
         )
-        next_race = next_race_result.scalars().first()
+        next_race = next_race_result.scalar_one_or_none()
         next_circuit = next_race.circuit if next_race else "the next race"
 
         for team in teams:
@@ -727,7 +727,29 @@ class RaceService:
                 await self._end_season(league)
 
         await self.db.flush()
-        return result
+
+        # Format result for handler
+        formatted_results = []
+        for car in result["results"]:
+            formatted_results.append({
+                "position": car.position if not car.is_dnf else None,
+                "driver": car.driver_name,
+                "team": car.team_name,
+                "points": F1_POINTS.get(car.position, 0) if not car.is_dnf else 0,
+                "dnf": car.is_dnf,
+                "dnf_reason": car.dnf_reason,
+                "fastest_lap": car.has_fastest_lap,
+            })
+
+        return {
+            "race_name": race.name,
+            "circuit": race.circuit,
+            "country": race.country,
+            "weather": result["weather"].value if hasattr(result["weather"], "value") else str(result["weather"]),
+            "results": formatted_results,
+            "events": result["events"],
+            "staff_insights": result.get("staff_insights", {}),
+        }
 
     async def _update_constructor_standing(self, league_id, season, team_id, points):
         result = await self.db.execute(

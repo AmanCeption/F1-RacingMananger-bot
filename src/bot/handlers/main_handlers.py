@@ -1660,8 +1660,9 @@ async def deleteleague_confirm(message: Message, state: FSMContext):
         )
         return
 
+    force = data.get("force", False)
     async with get_session() as db:
-        success, msg = await LeagueService(db).delete(message.from_user.id, league_id)
+        success, msg = await LeagueService(db).delete(message.from_user.id, league_id, force=force)
         await db.commit()
 
     await state.clear()
@@ -1822,6 +1823,56 @@ async def cmd_research_buy(message: Message):
         await db.commit()
     await message.answer("✅ " + msg if success else "❌ " + msg)
 
+
+
+
+# ─────────────────────────────────────────────
+# /forceleaveleague — Leave mid-season (forced)
+# ─────────────────────────────────────────────
+
+@router.message(Command("forceleaveleague"))
+async def cmd_forceleaveleague(message: Message):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first!")
+            return
+        success, msg = await LeagueService(db).leave(team.id, force=True)
+        await db.commit()
+    await message.answer("✅ " + msg if success else "❌ " + msg)
+
+
+# ─────────────────────────────────────────────
+# /forcedeleteleague — Delete mid-season (owner, forced)
+# ─────────────────────────────────────────────
+
+@router.message(Command("forcedeleteleague"))
+async def cmd_forcedeleteleague(message: Message, state: FSMContext):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team or not team.league_id:
+            await message.answer("❌ You are not in any league!")
+            return
+
+        from src.models.models import League
+        from sqlalchemy import select as sa_select
+        result = await db.execute(sa_select(League).where(League.id == team.league_id))
+        league = result.scalar_one_or_none()
+        if not league or league.owner_id != message.from_user.id:
+            await message.answer("❌ Only the league owner can delete the league!")
+            return
+
+    await state.update_data(league_id=team.league_id, league_name=league.name, force=True)
+    await state.set_state(DeleteLeagueStates.waiting_confirm)
+    await message.answer(
+        f"⚠️ <b>FORCE DELETE — League</b>\n\n"
+        f"League: <b>{safe(league.name)}</b>\n\n"
+        f"❗ Season active hai phir bhi delete hoga!\n"
+        f"Saari teams league se remove ho jayengi.\n\n"
+        f"Confirm karne ke liye league ka exact naam type karo:\n"
+        f"<code>{safe(league.name)}</code>\n\n"
+        f"Cancel ke liye /start bhejo"
+    )
 
 # ─────────────────────────────────────────────
 # /help — Command list

@@ -1118,6 +1118,13 @@ class AdminService:
         await self.db.flush()
         return f"User {user.first_name} unbanned."
 
+    async def get_all_user_ids(self) -> list[int]:
+        """Returns all non-banned user IDs for broadcast"""
+        result = await self.db.execute(
+            select(User.id).where(User.is_banned == False)
+        )
+        return [row[0] for row in result.fetchall()]
+
     async def log_suspicious(self, user_id: int, activity: str, details: str, severity: str = "low"):
         log = SuspiciousActivity(
             user_id=user_id, activity_type=activity, details=details, severity=severity

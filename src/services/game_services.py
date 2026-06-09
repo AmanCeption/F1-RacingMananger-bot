@@ -113,6 +113,17 @@ class TeamService:
         await self.db.flush()
         return team
 
+    async def check_name_in_league(self, league_id: int, name: str, exclude_team_id: int = None) -> bool:
+        """Returns True if name already taken in this league"""
+        q = select(Team).where(
+            and_(Team.league_id == league_id,
+                 func.lower(Team.name) == name.lower().strip())
+        )
+        if exclude_team_id:
+            q = q.where(Team.id != exclude_team_id)
+        result = await self.db.execute(q)
+        return result.scalar_one_or_none() is not None
+
     async def get_by_owner(self, owner_id: int) -> Optional[Team]:
         result = await self.db.execute(
             select(Team).where(Team.owner_id == owner_id)
@@ -217,6 +228,29 @@ class TeamService:
         team = await self.get_by_owner(owner_id)
         if not team:
             return False, "Team not found!"
+
+        # Check name not taken in same league
+        if team.league_id:
+            dup = await self.db.execute(
+                select(Team).where(
+                    and_(Team.league_id == team.league_id,
+                         func.lower(Team.name) == new_name.lower().strip(),
+                         Team.id != team.id)
+                )
+            )
+            if dup.scalar_one_or_none():
+                return False, f"Team name '{new_name}' already exists in this league! Please choose another name."
+
+        # Check global name uniqueness
+        dup_global = await self.db.execute(
+            select(Team).where(
+                and_(func.lower(Team.name) == new_name.lower().strip(),
+                     Team.id != team.id)
+            )
+        )
+        if dup_global.scalar_one_or_none():
+            return False, f"Team name '{new_name}' is already taken! Please choose another name."
+
         team.name = new_name
         await self.db.flush()
         return True, new_name
@@ -440,6 +474,22 @@ class DriverMarketService:
             return False, "Driver not found!"
         if not driver.is_free_agent:
             return False, "Driver is not a free agent!"
+
+        # Check driver not already in same league (different team)
+        if team.league_id:
+            league_teams_res = await self.db.execute(
+                select(Team.id).where(Team.league_id == team.league_id)
+            )
+            league_team_ids = [r[0] for r in league_teams_res.fetchall()]
+            if league_team_ids:
+                dup_res = await self.db.execute(
+                    select(TeamDriver).where(
+                        and_(TeamDriver.driver_id == driver_id,
+                             TeamDriver.team_id.in_(league_team_ids))
+                    )
+                )
+                if dup_res.scalar_one_or_none():
+                    return False, f"❌ {driver.name} is already signed by another team in this league!"
 
         salary = agreed_salary or driver.base_salary
 

@@ -12,15 +12,32 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from src.core.config import settings
-from src.core.database.session import create_db_and_tables
+from src.core.database.session import create_db_and_tables, engine
 from src.core.scheduler import setup_scheduler
 from src.bot.handlers import register_all_handlers
 from src.bot.middleware.auth import AuthMiddleware
 from src.bot.middleware.anti_cheat import AntiCheatMiddleware
 from src.bot.middleware.logging import LoggingMiddleware
 from src.utils.logger import setup_logging
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
+
+
+# ── Auto Migration (safe — IF NOT EXISTS) ───
+async def run_migrations():
+    """Runs safe ALTER TABLE migrations on every startup. IF NOT EXISTS = no harm if already done."""
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(
+                "ALTER TABLE staff ADD COLUMN IF NOT EXISTS is_real BOOLEAN DEFAULT FALSE"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE staff ADD COLUMN IF NOT EXISTS specialty VARCHAR(64)"
+            ))
+        logger.info("✅ Migrations applied successfully")
+    except Exception as e:
+        logger.warning(f"Migration warning (non-fatal): {e}")
 
 
 # ── Dummy HTTP server (Render ke liye) ──────
@@ -61,6 +78,8 @@ async def run_bot():
     logger.info("Starting F1 Management Bot...")
     await create_db_and_tables()
     logger.info("Database initialized")
+
+    await run_migrations()
 
     scheduler = await setup_scheduler(bot)
     dp["scheduler"] = scheduler

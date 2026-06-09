@@ -1709,7 +1709,6 @@ async def deleteleague_confirm(message: Message, state: FSMContext):
     force = data.get("force", False)
     async with get_session() as db:
         success, msg = await LeagueService(db).delete(message.from_user.id, league_id, force=force)
-        await db.commit()
 
     await state.clear()
     await message.answer("✅ " + msg if success else "❌ " + msg)

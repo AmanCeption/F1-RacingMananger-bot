@@ -314,12 +314,24 @@ class LeagueService:
         if not league or league.owner_id != owner_id:
             return False, "Permission denied!"
 
+        if league.status == LeagueStatus.ACTIVE:
+            return False, "Season already running! Race using /forcerace."
+
         teams_result = await self.db.execute(
             select(func.count(Team.id)).where(Team.league_id == league_id)
         )
         count = teams_result.scalar()
         if count < 2:
             return False, "Need at least 2 teams to start!"
+
+        # Clean up any leftover SCHEDULED races from previous failed starts
+        from sqlalchemy import delete as sa_delete
+        await self.db.execute(
+            sa_delete(Race).where(
+                and_(Race.league_id == league_id, Race.status == RaceStatus.SCHEDULED)
+            )
+        )
+        await self.db.flush()
 
         # Create races
         for i, track in enumerate(F1_CALENDAR[:settings.SEASON_RACES]):

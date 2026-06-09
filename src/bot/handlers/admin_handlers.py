@@ -33,10 +33,10 @@ def build_commentary(events: list, cars: list) -> list[str]:
     """
 
     # Gather names for personalization
-    driver_names = [c.driver_name for c in cars if not c.is_dnf]
-    team_names   = [c.team_name  for c in cars if not c.is_dnf]
-    all_drivers  = [c.driver_name for c in cars]
-    all_teams    = [c.team_name  for c in cars]
+    driver_names = [c["driver"] for c in cars if not c.get("dnf")]
+    team_names   = [c["team"]   for c in cars if not c.get("dnf")]
+    all_drivers  = [c["driver"] for c in cars]
+    all_teams    = [c["team"]   for c in cars]
 
     def rd(lst):
         return random.choice(lst) if lst else "Unknown"
@@ -400,8 +400,8 @@ async def cmd_forcerace(message: Message):
             raw_events  = result.get("events", [])
             results_list = result.get("results", [])
 
-            # Build personalized commentary from actual race cars
-            race_cars = results_list  # CarEntry objects with driver_name, team_name
+            # Build personalized commentary — results_list is list of dicts
+            race_cars = results_list
             commentary_chunks = build_commentary(raw_events, race_cars)
 
             # ── 1-MINUTE LIVE BROADCAST ──────────────────────────
@@ -440,31 +440,32 @@ async def cmd_forcerace(message: Message):
             medals = ["🥇", "🥈", "🥉"]
             podium_lines = []
             for idx, car in enumerate(results_list[:3]):
-                if not car.is_dnf:
-                    gap = "WINNER ✨" if idx == 0 else f"+{car.gap_to_leader:.3f}s"
+                if not car.get("dnf"):
+                    gap = "WINNER ✨" if idx == 0 else ""
                     podium_lines.append(
-                        f"{medals[idx]} <b>{car.driver_name}</b> ({car.team_name}) — {gap}"
+                        f"{medals[idx]} <b>{car['driver']}</b> ({car['team']}) — {gap}"
                     )
 
             rest = [
-                f"P{idx+4}. {car.driver_name} ({car.team_name})"
+                f"P{idx+4}. {car['driver']} ({car['team']})"
                 for idx, car in enumerate(results_list[3:10])
-                if not car.is_dnf
+                if not car.get("dnf")
             ]
 
-            dnf_cars = [c for c in results_list if c.is_dnf]
+            dnf_cars = [c for c in results_list if c.get("dnf")]
             dnf_text = ""
             if dnf_cars:
                 dnf_text = "\n\n💥 <b>Retirements:</b>\n" + "\n".join(
-                    f"  • {c.driver_name} — {c.dnf_reason}" for c in dnf_cars
+                    f"  • {c['driver']} — {c.get('dnf_reason', 'Mechanical failure')}" for c in dnf_cars
                 )
 
-            fl_driver = result.get("fastest_lap_driver")
-            fl_time   = result.get("fastest_lap_time")
-            fl_text = f"\n\n⚡ <b>Fastest Lap:</b> {fl_driver} — {fl_time:.3f}s 💜" if fl_driver and fl_time else ""
+            fl_text = ""
+            for car in results_list:
+                if car.get("fastest_lap"):
+                    fl_text = f"\n\n⚡ <b>Fastest Lap:</b> {car['driver']} 💜"
+                    break
 
-            weather_val = result.get("weather", "")
-            weather_str = weather_val.value.replace("_", " ").title() if hasattr(weather_val, "value") else str(weather_val)
+            weather_str = str(result.get("weather", "")).replace("_", " ").title()
 
             await message.answer(
                 f"🏆 <b>RACE RESULT — {next_race.name}</b>\n"

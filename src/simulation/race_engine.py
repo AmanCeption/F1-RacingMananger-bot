@@ -512,3 +512,274 @@ def generate_practice_report(car: CarEntry, weather: Weather) -> str:
         report += f"\n\n{weather_note}"
 
     return report
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAFF POST-RACE INSIGHTS
+# Each role gives different, dynamic commentary based on actual race data
+# ─────────────────────────────────────────────────────────────────────────────
+
+ROLE_INSIGHT_TEMPLATES = {
+    "team_principal": [
+        "🎙️ <b>{name} (Team Principal):</b>\n"
+        "P{position} today — {result_comment}. {budget_comment}. "
+        "We {points_comment}. Next race at {next_circuit}, we need to {tp_action}.",
+
+        "🎙️ <b>{name} (Team Principal):</b>\n"
+        "{mood} after {circuit}. {weather_comment}. "
+        "The whole team {team_comment}. {season_comment}.",
+    ],
+    "technical_director": [
+        "🔬 <b>{name} (Technical Director):</b>\n"
+        "Car performance analysis — {car_rating}. "
+        "{aero_comment}. {engine_comment}. "
+        "Biggest concern: {concern}. Next upgrade target: {upgrade_target}.",
+
+        "🔬 <b>{name} (Technical Director):</b>\n"
+        "Our {best_stat} is clearly our {best_comment}. "
+        "{weakness_comment}. "
+        "I'm pushing the factory to {factory_target} before {next_circuit}.",
+    ],
+    "chief_designer": [
+        "📐 <b>{name} (Chief Designer):</b>\n"
+        "The car {car_balance} in {weather_str} conditions today. "
+        "{setup_comment}. For {next_circuit}, I recommend {setup_recommendation}.",
+    ],
+    "head_of_aerodynamics": [
+        "💨 <b>{name} (Head of Aerodynamics):</b>\n"
+        "Aero data from {circuit}: {aero_analysis}. "
+        "Downforce efficiency was {downforce_rating}. "
+        "{drag_comment}. I want to trial {aero_next} at {next_circuit}.",
+    ],
+    "aerodynamicist": [
+        "💨 <b>{name} (Aerodynamicist):</b>\n"
+        "CFD correlated well in sector {best_sector} today. "
+        "{aero_issue}. Will refine the {aero_part} package overnight.",
+    ],
+    "chief_race_engineer": [
+        "📻 <b>{name} (Chief Race Engineer):</b>\n"
+        "Strategy call analysis — {strategy_verdict}. "
+        "{pit_comment}. Driver feedback: {driver_feedback}. "
+        "{weather_strategy_comment}.",
+
+        "📻 <b>{name} (Chief Race Engineer):</b>\n"
+        "{pit_timing_comment}. {undercut_comment}. "
+        "Tyre degradation was {deg_comment} than expected. "
+        "For {next_circuit}: {next_strategy_hint}.",
+    ],
+    "race_engineer": [
+        "📡 <b>{name} (Race Engineer):</b>\n"
+        "On-track comms analysis: {driver_name} had {lap_comment}. "
+        "{tyre_comment}. Setup changes for {next_circuit}: {setup_change}.",
+    ],
+    "pit_crew_chief": [
+        "🔧 <b>{name} (Pit Crew Chief):</b>\n"
+        "{stops} stop(s) executed. Best stop: {best_stop_time}s. "
+        "{stop_comment}. The crew {crew_rating}. "
+        "We'll drill {drill_focus} this week.",
+    ],
+    "sporting_director": [
+        "📋 <b>{name} (Sporting Director):</b>\n"
+        "Protest risk: {protest_comment}. "
+        "Tyre allocation for {next_circuit}: {tyre_alloc}. "
+        "{regulation_note}.",
+    ],
+    "power_unit_director": [
+        "⚡ <b>{name} (Power Unit Director):</b>\n"
+        "PU performance at {circuit}: {pu_comment}. "
+        "Deployment mode: {pu_mode}. Thermal data: {thermal_comment}. "
+        "Token usage: {token_comment}.",
+    ],
+    "head_of_strategy": [
+        "📊 <b>{name} (Head of Strategy):</b>\n"
+        "We modelled {models_run} scenarios pre-race. Chose {strategy_chosen} — {strategy_verdict}. "
+        "{undercut_comment}. VSC/SC probability for {next_circuit}: {sc_prob}%. "
+        "Recommend {next_strategy_hint}.",
+    ],
+    "performance_director": [
+        "📈 <b>{name} (Performance Director):</b>\n"
+        "Overall performance index: {perf_score}/100. "
+        "{strongest_area} is our biggest strength, {weakest_area} needs work. "
+        "{benchmark_comment}. Target for next race: P{target_position}.",
+    ],
+}
+
+
+def _result_comment(position: int) -> str:
+    if position == 1: return "an absolutely dominant victory"
+    if position <= 3: return "a solid podium finish"
+    if position <= 5: return "points but we wanted more"
+    if position <= 10: return "a points finish — acceptable"
+    return "a difficult afternoon we need to learn from"
+
+def _mood(position: int) -> str:
+    if position == 1: return "Ecstatic"
+    if position <= 3: return "Very pleased"
+    if position <= 6: return "Reasonably satisfied"
+    if position <= 10: return "Mixed feelings"
+    return "Deeply frustrated"
+
+def _car_rating(engine, aero, chassis) -> str:
+    avg = (engine + aero + chassis) / 3
+    if avg >= 85: return "exceptional across all metrics"
+    if avg >= 70: return "strong in most areas"
+    if avg >= 55: return "showing promise but gaps remain"
+    return "clearly needing development investment"
+
+def _best_stat_name(team_stats: dict) -> tuple:
+    best = max(team_stats, key=team_stats.get)
+    labels = {"engine": "power unit", "aerodynamics": "aero package",
+               "chassis": "chassis", "reliability": "reliability",
+               "tyres": "tyre management", "pit_crew": "pit crew"}
+    return best, labels.get(best, best)
+
+def _worst_stat_name(team_stats: dict) -> tuple:
+    worst = min(team_stats, key=team_stats.get)
+    labels = {"engine": "power unit", "aerodynamics": "aero package",
+               "chassis": "chassis", "reliability": "reliability",
+               "tyres": "tyre management", "pit_crew": "pit crew"}
+    return worst, labels.get(worst, worst)
+
+
+def generate_staff_race_insights(
+    staff_list: list,           # list of (TeamStaff, Staff) tuples
+    race_result: dict,          # full result dict from simulate_race
+    team_id: int,
+    team_stats: dict,           # {"engine": x, "aerodynamics": x, ...}
+    next_circuit: str = "the next race",
+) -> str:
+    """
+    Generate unique post-race insights from each hired staff member.
+    Every race gives different commentary based on actual result data.
+    """
+    if not staff_list:
+        return "⚠️ No staff hired — hire staff to receive expert race insights!"
+
+    # Extract team's car result
+    team_cars = [c for c in race_result["results"] if c.team_id == team_id]
+    if not team_cars:
+        return "No race data available for your team."
+
+    best_car = min(team_cars, key=lambda c: c.position if not c.is_dnf else 999)
+    position = best_car.position if not best_car.is_dnf else 20
+    dnf = best_car.is_dnf
+    pit_stops = best_car.pit_stops_done
+    strategy = best_car.strategy
+    weather = race_result["weather"]
+    circuit = race_result["circuit"]
+    weather_str = weather.value.replace("_", " ")
+    total_cars = len(race_result["results"])
+    points_earned = max(0, [25,18,15,12,10,8,6,4,2,1,0,0,0,0,0,0,0,0,0,0][position-1] if position <= 20 else 0)
+
+    best_stat_key, best_stat_label = _best_stat_name(team_stats)
+    worst_stat_key, worst_stat_label = _worst_stat_name(team_stats)
+
+    # Dynamic values based on race data
+    ctx = {
+        "position": position,
+        "circuit": circuit,
+        "next_circuit": next_circuit,
+        "weather_str": weather_str,
+        "strategy_chosen": strategy,
+        "stops": pit_stops,
+        "driver_name": best_car.driver_name,
+        "result_comment": _result_comment(position),
+        "mood": _mood(position),
+        "car_rating": _car_rating(team_stats.get("engine",50), team_stats.get("aerodynamics",50), team_stats.get("chassis",50)),
+        "best_stat": best_stat_key,
+        "best_comment": best_stat_label + (" is a real weapon" if team_stats.get(best_stat_key,50) >= 75 else " is competitive"),
+        "weakness_comment": f"But our {worst_stat_label} at {team_stats.get(worst_stat_key,50)}/100 is holding us back",
+        "weakest_area": worst_stat_label,
+        "strongest_area": best_stat_label,
+        "aero_comment": "Downforce levels were well-matched to this circuit" if team_stats.get("aerodynamics",50) >= 65 else "We were losing time in the high-speed sections — aero deficit clear",
+        "engine_comment": "Power unit felt strong on the straights" if team_stats.get("engine",50) >= 65 else "Top speed delta to leaders is a concern",
+        "concern": worst_stat_label + " performance",
+        "upgrade_target": best_stat_label + " refinement" if position <= 5 else worst_stat_label + " improvement",
+        "factory_target": "complete the floor upgrade" if team_stats.get("aerodynamics",50) < 70 else "finalise the new suspension geometry",
+        "car_balance": "felt planted and balanced" if not dnf else "suffered a terminal failure — frustrating",
+        "setup_comment": "Wing angles were optimal for traction zones" if team_stats.get("chassis",50) >= 65 else "We had too much understeer in slow-speed sections",
+        "setup_recommendation": "softer rear suspension to help rotation" if team_stats.get("chassis",50) < 65 else "a more aggressive front wing for extra downforce",
+        "aero_analysis": f"drag was {'acceptable' if team_stats.get('aerodynamics',50) >= 65 else 'too high'}, downforce balance was {'good' if team_stats.get('aerodynamics',50) >= 70 else 'lacking'}",
+        "downforce_rating": "competitive" if team_stats.get("aerodynamics",50) >= 65 else "below target",
+        "drag_comment": "Straight-line speed was good" if team_stats.get("engine",50) >= 65 else "We gave up too much on the straights",
+        "aero_next": "a new front wing spec" if team_stats.get("aerodynamics",50) < 70 else "a revised diffuser package",
+        "aero_issue": "Separated flow on the rear wing above 280km/h detected" if team_stats.get("aerodynamics",50) < 70 else "Clean aero data throughout — no anomalies",
+        "aero_part": "rear diffuser" if team_stats.get("aerodynamics",50) < 70 else "front wing",
+        "best_sector": random.choice([1, 2, 3]),
+        "strategy_verdict": ("excellent call — exactly right for conditions" if position <= 4
+                             else "reasonable but we could have been more aggressive" if position <= 8
+                             else "we got caught out — need better real-time data"),
+        "pit_comment": f"Pit window opened lap {'early' if pit_stops >= 2 else 'as planned'}",
+        "driver_feedback": ("positive — car felt consistent all race" if team_stats.get("chassis",50) >= 65
+                            else "reported heavy degradation in the final stint"),
+        "weather_strategy_comment": (f"The {weather_str} conditions caught several rivals — we were prepared" if weather.value in ["light_rain","heavy_rain","mixed"]
+                                     else "Dry conditions meant strategy was the main variable"),
+        "pit_timing_comment": f"We {'nailed' if position <= 5 else 'slightly missed'} the undercut window",
+        "undercut_comment": ("Undercut on lap " + str(random.randint(15,30)) + " was decisive" if position <= 5
+                              else "We responded too slowly to the overcut threat"),
+        "deg_comment": random.choice(["better", "worse", "exactly as expected"]),
+        "next_strategy_hint": ("2-stop aggressive — tyres should suit us" if team_stats.get("tyres",50) < 65
+                               else "1-stop with softs at the end — we have the tyre life"),
+        "lap_comment": ("consistently fast laps throughout" if team_stats.get("chassis",50) >= 65
+                        else "struggled with oversteer in sector 2 — we'll fix that"),
+        "tyre_comment": ("Tyre management was impressive — lasted longer than expected" if team_stats.get("tyres",50) >= 65
+                         else "Tyre degradation was a real problem — need to address setup"),
+        "setup_change": ("lower rear wing, stiffer front suspension" if team_stats.get("aerodynamics",50) >= 65
+                         else "higher front wing angle, softer rear springs"),
+        "best_stop_time": f"{random.uniform(2.3, 3.2):.1f}",
+        "stop_comment": ("All stops clean — great execution" if team_stats.get("pit_crew",50) >= 70
+                         else "One slow stop cost us position — drilled that this week"),
+        "crew_rating": ("executed perfectly under pressure" if team_stats.get("pit_crew",50) >= 70
+                        else "need to be sharper — a tenth lost in the pits today"),
+        "drill_focus": random.choice(["wheel gun speed", "front jack timing", "tyre heating protocol", "lollipop release timing"]),
+        "protest_comment": random.choice(["Low — clean race from us", "One borderline move under investigation", "None — by the book today"]),
+        "tyre_alloc": random.choice(["3 soft, 3 medium, 2 hard sets", "2 soft, 4 medium, 2 hard sets", "4 soft, 2 medium, 2 hard sets"]),
+        "regulation_note": random.choice(["Parc fermé conditions checked — no issues", "Front wing within tolerance — confirmed post-race", "Floor measurements passed scrutineering"]),
+        "pu_comment": ("Strong deployment throughout — ERS worked perfectly" if team_stats.get("engine",50) >= 70
+                       else "PU was protecting itself — thermal margins too tight"),
+        "pu_mode": random.choice(["Party mode in Q3 only", "FLOW mode for race conservation", "Attack mode last 10 laps"]),
+        "thermal_comment": ("Within green limits all race" if team_stats.get("reliability",50) >= 65
+                            else "Yellow sector 2 — monitoring closely"),
+        "token_comment": random.choice(["2 tokens remaining this season", "1 token used — one left", "No tokens spent — saving for next circuit"]),
+        "models_run": random.randint(12, 40),
+        "sc_prob": random.randint(15, 55),
+        "perf_score": min(99, max(40, 50 + (10 - position) * 4 + random.randint(-5, 5))),
+        "target_position": max(1, position - random.randint(1, 3)),
+        "benchmark_comment": ("We're closing the gap to the leaders" if position <= 8
+                              else "Still significant work to do to match the frontrunners"),
+        "budget_comment": (f"${points_earned * 100_000:,} prize money secured" if points_earned > 0 else "No prize money today"),
+        "points_comment": (f"scored {points_earned} valuable points" if points_earned > 0 else "came away empty-handed on points"),
+        "tp_action": random.choice(["push harder on development", "focus on strategy execution", "nail qualifying — pace is there", "get both drivers in the points"]),
+        "team_comment": random.choice(["delivered a great effort", "needs to respond better to strategy calls", "showed real character today", "worked flawlessly as a unit"]),
+        "season_comment": (f"We're P{random.randint(1,5)} in the constructors — keep pushing" if position <= 8
+                           else f"Need a strong run of results to move up the table"),
+        "weather_comment": (f"The {weather_str} threw a curveball but we handled it" if weather.value not in ["sunny","cloudy"]
+                            else "Clean conditions — no excuses, pure performance"),
+    }
+
+    lines = [f"📣 <b>POST-RACE STAFF DEBRIEF — {circuit.upper()}</b>\n"]
+    lines.append(f"🏁 Result: P{position} | {best_car.driver_name} | {'DNF ❌' if dnf else 'Finished ✅'}\n")
+
+    seen_roles = set()
+    for _, s in staff_list:
+        role = s.role.value if hasattr(s.role, "value") else str(s.role)
+        if role in seen_roles:
+            continue
+        seen_roles.add(role)
+
+        templates = ROLE_INSIGHT_TEMPLATES.get(role, [])
+        if not templates:
+            continue
+
+        template = random.choice(templates)
+        ctx["name"] = s.name
+
+        try:
+            insight = template.format(**ctx)
+        except KeyError:
+            insight = f"🗣️ <b>{s.name}:</b> Solid effort today — more analysis needed."
+
+        lines.append(insight)
+        lines.append("")
+
+    return "\n".join(lines)

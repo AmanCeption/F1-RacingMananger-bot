@@ -559,4 +559,17 @@ async def cmd_bid(message: Message):
         return
 
     try:
-   
+        listing_id = int(parts[1])
+        amount = int(parts[2])
+    except (ValueError, IndexError):
+        await message.answer("❌ Invalid format! Use: /bid <listing_id> <amount>")
+        return
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first!")
+            return
+
+        success, msg = await DriverMarketService(db).place_bid(team.id, listing_id, amount)
+        await message.answer("✅ " + msg if success else "❌ " + msg)

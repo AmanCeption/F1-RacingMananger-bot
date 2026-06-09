@@ -417,7 +417,15 @@ class LeagueService:
         await self.db.execute(
             update(Team).where(Team.league_id == league_id).values(league_id=None)
         )
-        # Delete races belonging to this league before deleting the league
+        # Delete race dependents first (FK constraints), then races
+        race_ids_result = await self.db.execute(
+            select(Race.id).where(Race.league_id == league_id)
+        )
+        race_ids = [r[0] for r in race_ids_result.fetchall()]
+        if race_ids:
+            await self.db.execute(delete(RaceResult).where(RaceResult.race_id.in_(race_ids)))
+            await self.db.execute(delete(RaceStrategy).where(RaceStrategy.race_id.in_(race_ids)))
+            await self.db.execute(delete(QualifyingResult).where(QualifyingResult.race_id.in_(race_ids)))
         await self.db.execute(
             delete(Race).where(Race.league_id == league_id)
         )

@@ -211,7 +211,7 @@ class TeamDriver(Base):
     __tablename__ = "team_drivers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     driver_id: Mapped[int] = mapped_column(Integer, ForeignKey("drivers.id"))
     salary: Mapped[int] = mapped_column(BigInteger)
     contract_years: Mapped[int] = mapped_column(Integer, default=1)
@@ -249,7 +249,7 @@ class TeamStaff(Base):
     __tablename__ = "team_staff"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     staff_id: Mapped[int] = mapped_column(Integer, ForeignKey("staff.id"))
     salary: Mapped[int] = mapped_column(BigInteger)
     hired_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
@@ -291,7 +291,7 @@ class RaceResult(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     race_id: Mapped[int] = mapped_column(Integer, ForeignKey("races.id"))
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     driver_id: Mapped[int] = mapped_column(Integer, ForeignKey("drivers.id"))
     position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     points: Mapped[int] = mapped_column(Integer, default=0)
@@ -311,7 +311,7 @@ class QualifyingResult(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     race_id: Mapped[int] = mapped_column(Integer, ForeignKey("races.id"))
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     driver_id: Mapped[int] = mapped_column(Integer, ForeignKey("drivers.id"))
     grid_position: Mapped[int] = mapped_column(Integer)
     q1_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -326,7 +326,7 @@ class RaceStrategy(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     race_id: Mapped[int] = mapped_column(Integer, ForeignKey("races.id"))
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     driver_id: Mapped[int] = mapped_column(Integer, ForeignKey("drivers.id"))
     strategy_type: Mapped[str] = mapped_column(String(16))  # 1stop/2stop/3stop/aggressive/balanced/conservative
     starting_tyre: Mapped[TyreCompound] = mapped_column(SAEnum(TyreCompound))
@@ -348,7 +348,7 @@ class Season(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    champion_team_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id"), nullable=True)
+    champion_team_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True)
     champion_driver_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("drivers.id"), nullable=True)
 
     league: Mapped["League"] = relationship("League", back_populates="seasons")
@@ -361,7 +361,7 @@ class DriverStanding(Base):
     league_id: Mapped[int] = mapped_column(Integer, ForeignKey("leagues.id"))
     season: Mapped[int] = mapped_column(Integer)
     driver_id: Mapped[int] = mapped_column(Integer, ForeignKey("drivers.id"))
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     points: Mapped[int] = mapped_column(Integer, default=0)
     wins: Mapped[int] = mapped_column(Integer, default=0)
     podiums: Mapped[int] = mapped_column(Integer, default=0)
@@ -375,7 +375,7 @@ class ConstructorStanding(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     league_id: Mapped[int] = mapped_column(Integer, ForeignKey("leagues.id"))
     season: Mapped[int] = mapped_column(Integer)
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     points: Mapped[int] = mapped_column(Integer, default=0)
     wins: Mapped[int] = mapped_column(Integer, default=0)
     podiums: Mapped[int] = mapped_column(Integer, default=0)
@@ -390,14 +390,14 @@ class DriverTransfer(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     driver_id: Mapped[int] = mapped_column(Integer, ForeignKey("drivers.id"))
-    selling_team_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id"), nullable=True)
-    buying_team_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id"), nullable=True)
+    selling_team_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True)
+    buying_team_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True)
     asking_price: Mapped[int] = mapped_column(BigInteger)
     final_price: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     is_auction: Mapped[bool] = mapped_column(Boolean, default=False)
     auction_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     highest_bid: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    highest_bidder_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id"), nullable=True)
+    highest_bidder_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=True)
     status: Mapped[TransferStatus] = mapped_column(SAEnum(TransferStatus), default=TransferStatus.PENDING)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -428,7 +428,7 @@ class TeamSponsor(Base):
     __tablename__ = "team_sponsors"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     sponsor_id: Mapped[int] = mapped_column(Integer, ForeignKey("sponsors.id"))
     contract_races: Mapped[int] = mapped_column(Integer, default=5)
     races_completed: Mapped[int] = mapped_column(Integer, default=0)
@@ -448,7 +448,7 @@ class ResearchProject(Base):
     __tablename__ = "research_projects"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     tree: Mapped[str] = mapped_column(String(32))  # power_unit/aero/weight/reliability/tyres
     node: Mapped[str] = mapped_column(String(64))
     rp_cost: Mapped[int] = mapped_column(Integer)
@@ -482,7 +482,7 @@ class TeamAchievement(Base):
     __tablename__ = "team_achievements"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
     achievement_id: Mapped[int] = mapped_column(Integer, ForeignKey("achievements.id"))
     earned_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 

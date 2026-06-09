@@ -1574,7 +1574,7 @@ async def deleteteam_confirm(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        if message.text.strip() != team.name:
+        if message.text.strip().lower() != team.name.lower():
             await message.answer(
                 f"❌ Naam match nahi kiya!\n\n"
                 f"Exact type karo: <code>{safe(team.name)}</code>\n"

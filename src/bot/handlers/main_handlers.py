@@ -142,6 +142,18 @@ async def register_logo(message: Message, state: FSMContext):
     async with get_session() as db:
         try:
             await seed_database(db)
+            # Global name uniqueness check
+            from sqlalchemy import select as sa_select, func as sa_func
+            from src.models.models import Team as TeamModel
+            dup = await db.execute(
+                sa_select(TeamModel).where(
+                    sa_func.lower(TeamModel.name) == data["team_name"].lower().strip()
+                )
+            )
+            if dup.scalar_one_or_none():
+                await state.set_state(RegisterStates.waiting_name)
+                await message.answer("❌ That team name is already taken! Please send a different name:")
+                return
             team = await TeamService(db).create(
                 owner_id=message.from_user.id,
                 name=data["team_name"],
@@ -1936,3 +1948,63 @@ async def cmd_help(message: Message):
         "  /budget — Budget breakdown\n"
     )
     await message.answer(text)
+
+
+# ─────────────────────────────────────────────
+# NEXT RACE
+# ─────────────────────────────────────────────
+
+@router.message(Command("nextrace"))
+async def cmd_nextrace(message: Message):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first with /register!")
+            return
+        if not team.league_id:
+            await message.answer("❌ Join a league first!")
+            return
+
+        from src.models.models import League, Race, RaceStatus as RS
+        from sqlalchemy import select, and_
+
+        # Get league info
+        league_res = await db.execute(select(League).where(League.id == team.league_id))
+        league = league_res.scalar_one_or_none()
+
+        # Get next scheduled race
+        race_res = await db.execute(
+            select(Race).where(
+                and_(Race.league_id == team.league_id, Race.status == RS.SCHEDULED)
+            ).order_by(Race.round.asc()).limit(1)
+        )
+        race = race_res.scalar_one_or_none()
+
+        if not race:
+            await message.answer(
+                "🏁 <b>Season Complete!</b>\n\n"
+                "Saari races ho gayi hain. Admin se season wrap-up ka wait karo.\n"
+                "Check /standings for final standings."
+            )
+            return
+
+        # Count finished races
+        finished_res = await db.execute(
+            select(Race).where(
+                and_(Race.league_id == team.league_id, Race.status == RS.FINISHED)
+            )
+        )
+        finished_count = len(finished_res.scalars().all())
+        total_races = league.total_races if hasattr(league, "total_races") else 24
+
+        await message.answer(
+            f"🏎️ <b>Next Race — Round {race.round}</b>\n\n"
+            f"{race.country} <b>{race.name}</b>\n"
+            f"🏟️ {race.circuit}\n"
+            f"🔢 {race.laps} Laps\n\n"
+            f"📊 Season Progress: {finished_count}/{total_races} races done\n\n"
+            f"💡 Race ke liye:\n"
+            f"  • /strategy — Apni race strategy set karo\n"
+            f"  • /practice — Practice session karo\n"
+            f"  • /budget — Budget check karo"
+        )

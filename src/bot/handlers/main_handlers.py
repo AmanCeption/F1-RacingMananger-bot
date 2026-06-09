@@ -589,8 +589,21 @@ async def cmd_bid(message: Message):
             await message.answer("❌ Register first!")
             return
 
+        # Capture previous highest bidder for outbid notification
+        from src.models.models import DriverTransfer as DT
+        from sqlalchemy import select as sa_sel
+        prev_res = await db.execute(sa_sel(DT).where(DT.id == listing_id))
+        prev_transfer = prev_res.scalar_one_or_none()
+        prev_bidder_id = prev_transfer.highest_bidder_id if prev_transfer else None
+
         success, msg = await DriverMarketService(db).place_bid(team.id, listing_id, amount)
         await message.answer("✅ " + msg if success else "❌ " + msg)
+
+        if success:
+            from src.services.notification_service import send_transfer_alert, send_outbid_alert
+            await send_transfer_alert(message.bot, db, listing_id, team.name, amount)
+            if prev_bidder_id and prev_bidder_id != team.id:
+                await send_outbid_alert(message.bot, db, listing_id, prev_bidder_id, amount)
 
 
 # ─────────────────────────────────────────────
@@ -1911,43 +1924,7 @@ async def cmd_forcedeleteleague(message: Message, state: FSMContext):
 # /help — Command list
 # ─────────────────────────────────────────────
 
-@router.message(Command("help"))
-async def cmd_help(message: Message):
-    text = (
-        "📖 <b>F1 Management Bot — Commands</b>\n\n"
-        "<b>Team:</b>\n"
-        "  /register — Create your team\n"
-        "  /team — View your team\n"
-        "  /upgrade — Upgrade car stats\n"
-        "  /renameteam — Rename your team\n"
-        "  /deleteteam — Delete your team\n\n"
-        "<b>League:</b>\n"
-        "  /league — View league info\n"
-        "  /startseason — Start season (owner)\n"
-        "  /runrace — Run next race (owner)\n"
-        "  /leaveleague — Leave league\n"
-        "  /deleteleague — Delete league (owner)\n\n"
-        "<b>Drivers:</b>\n"
-        "  /market — Driver market\n"
-        "  /buydriver &lt;id&gt; — Sign driver\n"
-        "  /selldriver &lt;id&gt; [price] — Sell driver\n"
-        "  /bid &lt;listing_id&gt; &lt;amount&gt; — Place bid\n\n"
-        "<b>Staff:</b>\n"
-        "  /staffmarket — Browse staff\n"
-        "  /hirestaff &lt;id&gt; — Hire staff\n"
-        "  /mystaff — View your staff\n"
-        "  /firestaff &lt;contract_id&gt; — Release staff\n\n"
-        "<b>Race:</b>\n"
-        "  /strategy — Set race strategy\n"
-        "  /practice — Practice session\n\n"
-        "<b>Other:</b>\n"
-        "  /standings — Championship standings\n"
-        "  /research — R&D tree\n"
-        "  /sponsors — View sponsors\n"
-        "  /daily — Daily reward\n"
-        "  /budget — Budget breakdown\n"
-    )
-    await message.answer(text)
+# /help is handled by onboarding_handlers.py (categorized + topics)
 
 
 # ─────────────────────────────────────────────

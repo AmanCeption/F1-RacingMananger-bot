@@ -1493,16 +1493,37 @@ async def cmd_runrace(message: Message):
         await db.commit()
 
     if not result:
-        await message.answer("❌ No race to run! Check /standings.")
+        await message.answer("❌ No race to run! All races finished, or season not started.")
         return
 
-    text = f"🏁 <b>{safe(result['race_name'])} — Results</b>\n\n"
-    for entry in result.get("results", [])[:10]:
-        pos = entry.get("position", "DNF")
-        medal = ["🥇", "🥈", "🥉"][pos - 1] if isinstance(pos, int) and pos <= 3 else f"{pos}."
-        dnf = " 💥 DNF" if entry.get("dnf") else ""
-        fl = " ⚡FL" if entry.get("fastest_lap") else ""
-        text += f"{medal} {safe(entry['driver'])} ({safe(entry['team'])}){dnf}{fl} — {entry.get('points', 0)} pts\n"
+    weather_emoji = {
+        "sunny": "☀️", "cloudy": "🌥️", "light_rain": "🌧️",
+        "heavy_rain": "⛈️", "mixed": "🌦️"
+    }
+    w = result.get("weather", "sunny")
+    text = (
+        f"🏁 <b>{safe(result['race_name'])}</b>\n"
+        f"🏎️ {safe(result.get('circuit', ''))} {result.get('country', '')}\n"
+        f"{weather_emoji.get(w, '🌤️')} Weather: {w.replace('_', ' ').title()}\n\n"
+        f"<b>Race Results:</b>\n"
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+    for entry in result.get("results", [])[:20]:
+        pos = entry.get("position")
+        if entry.get("dnf"):
+            pos_str = "💥"
+        elif pos and pos <= 3:
+            pos_str = medals[pos - 1]
+        elif pos:
+            pos_str = f"{pos}."
+        else:
+            pos_str = "💥"
+
+        fl = " ⚡" if entry.get("fastest_lap") else ""
+        dnf_reason = f" ({safe(entry['dnf_reason'])})" if entry.get("dnf") and entry.get("dnf_reason") else ""
+        pts = f" — {entry['points']} pts" if entry.get("points", 0) > 0 else ""
+        text += f"{pos_str} {safe(entry['driver'])} <i>({safe(entry['team'])})</i>{fl}{dnf_reason}{pts}\n"
 
     await message.answer(text)
 

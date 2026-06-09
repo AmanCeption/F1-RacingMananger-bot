@@ -56,7 +56,7 @@ async def cmd_profile(message: Message):
         # Achievements
         ach_res = await db.execute(
             select(TeamAchievement, Achievement)
-            .join(Achievement, TeamAchievement.achievement_key == Achievement.key)
+            .join(Achievement, TeamAchievement.achievement_id == Achievement.id)
             .where(TeamAchievement.team_id == team.id)
             .order_by(TeamAchievement.earned_at.desc())
         )
@@ -173,7 +173,8 @@ async def cmd_halloffame(message: Message):
         champion_res = await db.execute(
             select(TeamAchievement, Team)
             .join(Team, TeamAchievement.team_id == Team.id)
-            .where(TeamAchievement.achievement_key == "champion")
+            .join(Achievement, TeamAchievement.achievement_id == Achievement.id)
+            .where(Achievement.key == "champion")
             .order_by(TeamAchievement.earned_at.desc())
         )
         champions = champion_res.all()

@@ -61,9 +61,16 @@ class TransferStatus(str, enum.Enum):
 class StaffRole(str, enum.Enum):
     TEAM_PRINCIPAL = "team_principal"
     TECHNICAL_DIRECTOR = "technical_director"
+    CHIEF_DESIGNER = "chief_designer"
+    HEAD_OF_AERODYNAMICS = "head_of_aerodynamics"
     AERODYNAMICIST = "aerodynamicist"
     RACE_ENGINEER = "race_engineer"
+    CHIEF_RACE_ENGINEER = "chief_race_engineer"
     PIT_CREW_CHIEF = "pit_crew_chief"
+    SPORTING_DIRECTOR = "sporting_director"
+    POWER_UNIT_DIRECTOR = "power_unit_director"
+    HEAD_OF_STRATEGY = "head_of_strategy"
+    PERFORMANCE_DIRECTOR = "performance_director"
 
 
 # ─────────────────────────────────────────────
@@ -229,6 +236,8 @@ class Staff(Base):
     skill: Mapped[int] = mapped_column(Integer, default=70)  # 1-100
     salary: Mapped[int] = mapped_column(BigInteger, default=2_000_000)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_real: Mapped[bool] = mapped_column(Boolean, default=False)  # real F1 legend
+    specialty: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # e.g. "aero", "strategy", "engine"
 
     # Role-specific bonus (%)
     performance_bonus: Mapped[float] = mapped_column(Float, default=1.0)

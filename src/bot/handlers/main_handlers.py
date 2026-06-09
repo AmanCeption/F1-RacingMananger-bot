@@ -1199,3 +1199,681 @@ async def cb_upgrade_menu(callback: CallbackQuery):
 
     await callback.message.edit_text(text, reply_markup=upgrade_menu_kb(team_id))
     await callback.answer()
+
+
+# ─────────────────────────────────────────────
+# LEAGUE COMMANDS
+# ─────────────────────────────────────────────
+
+@router.message(Command("league"))
+@router.message(F.text == "👥 League")
+async def cmd_league(message: Message):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first with /register")
+            return
+
+        if not team.league_id:
+            await message.answer(
+                "👥 <b>League</b>\n\n"
+                "You are not in any league yet!\n\n"
+                "Use the buttons below to create or join one:",
+                reply_markup=league_kb()
+            )
+            return
+
+        from src.models.models import League
+        from sqlalchemy import select as sa_select
+        result = await db.execute(sa_select(League).where(League.id == team.league_id))
+        league = result.scalar_one_or_none()
+        if not league:
+            await message.answer("❌ League not found!", reply_markup=league_kb())
+            return
+
+        teams_result = await db.execute(
+            sa_select(Team).where(Team.league_id == league.id)
+        )
+        teams = teams_result.scalars().all()
+        is_owner = league.owner_id == message.from_user.id
+
+        text = (
+            f"👥 <b>{safe(league.name)}</b>\n\n"
+            f"📋 {safe(league.description or 'No description')}\n\n"
+            f"🔑 Invite Code: <code>{league.invite_code}</code>\n"
+            f"📊 Status: {league.status.value.title()}\n"
+            f"🏎️ Teams: {len(teams)}/{league.max_teams}\n"
+            f"🏆 Season: {league.current_season} | Race: {league.current_race}\n"
+            f"👑 Owner: {'You' if is_owner else 'Other'}\n\n"
+        )
+
+        if is_owner:
+            text += (
+                f"<b>Owner Commands:</b>\n"
+                f"• /startseason — Start the season\n"
+                f"• /runrace — Simulate next race\n"
+                f"• /deleteleague — Delete this league\n\n"
+            )
+        text += "• /leaveleague — Leave this league"
+
+        await message.answer(text, reply_markup=league_kb())
+
+
+@router.callback_query(F.data == "league:create")
+async def cb_league_create(callback: CallbackQuery, state: FSMContext):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+        if team.league_id:
+            await callback.answer("❌ You're already in a league!", show_alert=True)
+            return
+
+    await state.set_state(LeagueCreateStates.waiting_name)
+    await callback.message.answer(
+        "🏆 <b>Create League</b>\n\n"
+        "Enter a name for your league:\n"
+        "<i>Max 32 characters</i>"
+    )
+    await callback.answer()
+
+
+@router.message(LeagueCreateStates.waiting_name)
+async def league_create_name(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if len(name) < 3:
+        await message.answer("❌ Too short! Min 3 characters.")
+        return
+    if len(name) > 32:
+        await message.answer("❌ Too long! Max 32 characters.")
+        return
+    await state.update_data(league_name=name)
+    await state.set_state(LeagueCreateStates.waiting_description)
+    await message.answer(
+        f"✅ Name: <b>{safe(name)}</b>\n\n"
+        "Add a description (or type <b>skip</b>):"
+    )
+
+
+@router.message(LeagueCreateStates.waiting_description)
+async def league_create_description(message: Message, state: FSMContext):
+    desc = "" if message.text.strip().lower() == "skip" else message.text.strip()
+    await state.update_data(league_desc=desc)
+    await state.set_state(LeagueCreateStates.waiting_password)
+    await message.answer(
+        "🔒 Set a password to make it private?\n"
+        "Type a password or <b>skip</b> for public league:"
+    )
+
+
+@router.message(LeagueCreateStates.waiting_password)
+async def league_create_password(message: Message, state: FSMContext):
+    data = await state.get_data()
+    password = None if message.text.strip().lower() == "skip" else message.text.strip()
+    is_public = password is None
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first!")
+            await state.clear()
+            return
+        try:
+            league = await LeagueService(db).create(
+                owner_id=message.from_user.id,
+                name=data["league_name"],
+                description=data.get("league_desc", ""),
+                is_public=is_public,
+                password=password,
+            )
+            team.league_id = league.id
+            await db.commit()
+            await state.clear()
+            await message.answer(
+                f"🎉 <b>League Created!</b>\n\n"
+                f"🏆 Name: <b>{safe(league.name)}</b>\n"
+                f"🔑 Invite Code: <code>{league.invite_code}</code>\n"
+                f"🌍 Type: {'Public' if is_public else 'Private 🔒'}\n\n"
+                f"Share the invite code with others!\n"
+                f"Use /startseason when everyone has joined."
+            )
+        except ValueError as e:
+            await message.answer(f"❌ {e}")
+            await state.clear()
+
+
+@router.callback_query(F.data == "league:join")
+async def cb_league_join(callback: CallbackQuery, state: FSMContext):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+        if team.league_id:
+            await callback.answer("❌ You're already in a league!", show_alert=True)
+            return
+
+    await state.set_state(LeagueJoinStates.waiting_code)
+    await callback.message.answer(
+        "🔗 <b>Join League</b>\n\n"
+        "Enter the 8-character invite code:"
+    )
+    await callback.answer()
+
+
+@router.message(LeagueJoinStates.waiting_code)
+async def league_join_code(message: Message, state: FSMContext):
+    code = message.text.strip().upper()
+    if len(code) != 8:
+        await message.answer("❌ Invite code must be 8 characters!")
+        return
+    await state.update_data(invite_code=code)
+    await state.set_state(LeagueJoinStates.waiting_password)
+    await message.answer(
+        f"🔑 Code: <code>{code}</code>\n\n"
+        "If this league has a password, enter it.\n"
+        "Otherwise type <b>skip</b>:"
+    )
+
+
+@router.message(LeagueJoinStates.waiting_password)
+async def league_join_password(message: Message, state: FSMContext):
+    data = await state.get_data()
+    password = None if message.text.strip().lower() == "skip" else message.text.strip()
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first!")
+            await state.clear()
+            return
+        success, msg = await LeagueService(db).join(team.id, data["invite_code"], password)
+        await db.commit()
+
+    await state.clear()
+    await message.answer("✅ " + msg if success else "❌ " + msg)
+
+
+@router.callback_query(F.data == "league:public")
+async def cb_league_public(callback: CallbackQuery):
+    async with get_session() as db:
+        leagues = await LeagueService(db).list_public()
+
+    if not leagues:
+        await callback.message.answer("😕 No public leagues available right now.")
+        await callback.answer()
+        return
+
+    text = "🌍 <b>Public Leagues</b>\n\n"
+    for lg in leagues:
+        text += (
+            f"🏆 <b>{safe(lg.name)}</b>\n"
+            f"  Code: <code>{lg.invite_code}</code> | Status: {lg.status.value.title()}\n"
+            f"  {safe(lg.description or '')}\n\n"
+        )
+    text += "Use the invite code to join via 🔗 Join League."
+    await callback.message.answer(text)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "league:mine")
+async def cb_league_mine(callback: CallbackQuery):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team or not team.league_id:
+            await callback.message.answer("❌ You are not in any league!")
+            await callback.answer()
+            return
+
+        from src.models.models import League
+        from sqlalchemy import select as sa_select
+        result = await db.execute(sa_select(League).where(League.id == team.league_id))
+        league = result.scalar_one_or_none()
+        teams_result = await db.execute(
+            sa_select(Team).where(Team.league_id == league.id)
+        )
+        teams = teams_result.scalars().all()
+
+    is_owner = league.owner_id == callback.from_user.id
+    text = (
+        f"👥 <b>{safe(league.name)}</b>\n\n"
+        f"🔑 Invite Code: <code>{league.invite_code}</code>\n"
+        f"📊 Status: {league.status.value.title()}\n"
+        f"🏎️ Teams: {len(teams)}/{league.max_teams}\n"
+        f"🏆 Season: {league.current_season}\n"
+        f"👑 Owner: {'You ✅' if is_owner else 'Other'}\n\n"
+        f"Teams:\n"
+    )
+    for t in teams:
+        text += f"  • {safe(t.name)}\n"
+
+    await callback.message.answer(text)
+    await callback.answer()
+
+
+# ─────────────────────────────────────────────
+# /startseason & /runrace — League owner commands
+# ─────────────────────────────────────────────
+
+@router.message(Command("startseason"))
+async def cmd_startseason(message: Message):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team or not team.league_id:
+            await message.answer("❌ You are not in any league!")
+            return
+        success, msg = await LeagueService(db).start_season(team.league_id, message.from_user.id)
+        await db.commit()
+    await message.answer("✅ " + msg if success else "❌ " + msg)
+
+
+@router.message(Command("runrace"))
+async def cmd_runrace(message: Message):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team or not team.league_id:
+            await message.answer("❌ You are not in any league!")
+            return
+
+        from src.models.models import League, LeagueStatus as LS
+        from sqlalchemy import select as sa_select
+        result = await db.execute(sa_select(League).where(League.id == team.league_id))
+        league = result.scalar_one_or_none()
+        if not league or league.owner_id != message.from_user.id:
+            await message.answer("❌ Only the league owner can run races!")
+            return
+
+        await message.answer("🏁 Simulating race... please wait.")
+        result = await RaceService(db).run_race(team.league_id)
+        await db.commit()
+
+    if not result:
+        await message.answer("❌ No race to run! Check /standings.")
+        return
+
+    text = f"🏁 <b>{safe(result['race_name'])} — Results</b>\n\n"
+    for entry in result.get("results", [])[:10]:
+        pos = entry.get("position", "DNF")
+        medal = ["🥇", "🥈", "🥉"][pos - 1] if isinstance(pos, int) and pos <= 3 else f"{pos}."
+        dnf = " 💥 DNF" if entry.get("dnf") else ""
+        fl = " ⚡FL" if entry.get("fastest_lap") else ""
+        text += f"{medal} {safe(entry['driver'])} ({safe(entry['team'])}){dnf}{fl} — {entry.get('points', 0)} pts\n"
+
+    await message.answer(text)
+
+
+# ─────────────────────────────────────────────
+# /deleteteam — Delete your team (with confirmation)
+# ─────────────────────────────────────────────
+
+@router.message(Command("deleteteam"))
+async def cmd_deleteteam(message: Message, state: FSMContext):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ You don't have a team!")
+            return
+
+    await state.set_state(DeleteTeamStates.waiting_confirm)
+    await message.answer(
+        f"⚠️ <b>Team Delete Karna Chahte Ho?</b>\n\n"
+        f"Team: <b>{safe(team.name)}</b>\n"
+        f"Budget: <b>${team.budget:,}</b>\n\n"
+        f"❗ Yeh permanent hai! Sab kuch delete hoga:\n"
+        f"Drivers, staff, sponsors, achievements\n\n"
+        f"Confirm karne ke liye team ka exact naam type karo:\n"
+        f"<code>{safe(team.name)}</code>\n\n"
+        f"Cancel karne ke liye /start bhejo"
+    )
+
+
+@router.message(DeleteTeamStates.waiting_confirm)
+async def deleteteam_confirm(message: Message, state: FSMContext):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Team not found.")
+            await state.clear()
+            return
+
+        if message.text.strip() != team.name:
+            await message.answer(
+                f"❌ Naam match nahi kiya!\n\n"
+                f"Exact type karo: <code>{safe(team.name)}</code>\n"
+                f"Ya cancel ke liye /start bhejo."
+            )
+            return
+
+        success, msg = await TeamService(db).delete(message.from_user.id)
+        await db.commit()
+
+    await state.clear()
+    if success:
+        await message.answer(
+            "✅ <b>Team delete ho gayi!</b>\n\n"
+            "Naya team banane ke liye /register use karo.",
+            reply_markup=main_menu_kb()
+        )
+    else:
+        await message.answer(f"❌ {msg}")
+
+
+# ─────────────────────────────────────────────
+# /renameteam — Rename your team
+# ─────────────────────────────────────────────
+
+@router.message(Command("renameteam"))
+async def cmd_renameteam(message: Message, state: FSMContext):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ You don't have a team!")
+            return
+
+    await state.set_state(RenameTeamStates.waiting_newname)
+    await message.answer(
+        f"✏️ <b>Rename Team</b>\n\n"
+        f"Current name: <b>{safe(team.name)}</b>\n\n"
+        f"Naya naam type karo (3-30 characters):\n"
+        f"Cancel ke liye /start bhejo."
+    )
+
+
+@router.message(RenameTeamStates.waiting_newname)
+async def renameteam_newname(message: Message, state: FSMContext):
+    new_name = message.text.strip()
+    async with get_session() as db:
+        success, result = await TeamService(db).rename(message.from_user.id, new_name)
+        await db.commit()
+
+    await state.clear()
+    if success:
+        await message.answer(f"✅ Team renamed to <b>{safe(result)}</b>!")
+    else:
+        await message.answer(f"❌ {result}")
+
+
+# ─────────────────────────────────────────────
+# /leaveleague — Leave current league
+# ─────────────────────────────────────────────
+
+@router.message(Command("leaveleague"))
+async def cmd_leaveleague(message: Message):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first!")
+            return
+        success, msg = await LeagueService(db).leave(team.id)
+        await db.commit()
+    await message.answer("✅ " + msg if success else "❌ " + msg)
+
+
+# ─────────────────────────────────────────────
+# /deleteleague — Delete league (owner only, with confirmation)
+# ─────────────────────────────────────────────
+
+@router.message(Command("deleteleague"))
+async def cmd_deleteleague(message: Message, state: FSMContext):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team or not team.league_id:
+            await message.answer("❌ You are not in any league!")
+            return
+
+        from src.models.models import League
+        from sqlalchemy import select as sa_select
+        result = await db.execute(sa_select(League).where(League.id == team.league_id))
+        league = result.scalar_one_or_none()
+        if not league or league.owner_id != message.from_user.id:
+            await message.answer("❌ Only the league owner can delete the league!")
+            return
+
+    await state.update_data(league_id=team.league_id, league_name=league.name)
+    await message.answer(
+        f"⚠️ <b>League Delete Karna Chahte Ho?</b>\n\n"
+        f"League: <b>{safe(league.name)}</b>\n\n"
+        f"❗ Yeh permanent hai! Saari teams league se remove ho jayengi.\n\n"
+        f"Confirm karne ke liye league ka exact naam type karo:\n"
+        f"<code>{safe(league.name)}</code>\n\n"
+        f"Cancel ke liye /start bhejo"
+    )
+    from aiogram.fsm.state import State, StatesGroup
+
+    class _DeleteLeagueConfirm(StatesGroup):
+        waiting = State()
+
+    await state.set_state("deleteleague_confirm")
+
+
+@router.message(F.text, flags={"deleteleague_confirm": True})
+async def _noop():
+    pass
+
+
+# Use a simple approach — check state string
+from aiogram.fsm.context import FSMContext as _FSMCtx
+
+@router.message(F.text)
+async def deleteleague_confirm_handler(message: Message, state: FSMContext):
+    current = await state.get_state()
+    if current != "deleteleague_confirm":
+        return
+
+    data = await state.get_data()
+    league_name = data.get("league_name", "")
+    league_id = data.get("league_id")
+
+    if message.text.strip() != league_name:
+        await message.answer(
+            f"❌ Naam match nahi kiya!\n\n"
+            f"Exact type karo: <code>{safe(league_name)}</code>\n"
+            f"Ya cancel ke liye /start bhejo."
+        )
+        return
+
+    async with get_session() as db:
+        success, msg = await LeagueService(db).delete(message.from_user.id, league_id)
+        await db.commit()
+
+    await state.clear()
+    await message.answer("✅ " + msg if success else "❌ " + msg)
+
+
+# ─────────────────────────────────────────────
+# /daily — Daily reward
+# ─────────────────────────────────────────────
+
+@router.message(Command("daily"))
+@router.message(F.text == "🎁 Daily Reward")
+async def cmd_daily(message: Message):
+    async with get_session() as db:
+        result = await UserService(db).claim_daily(message.from_user.id)
+        await db.commit()
+
+    if not result:
+        await message.answer("❌ Register first!")
+        return
+
+    if result["available"]:
+        await message.answer(
+            f"🎁 <b>Daily Reward Claimed!</b>\n\n"
+            f"💰 +${result['money']:,}\n"
+            f"🔬 +{result['rp']} Research Points\n\n"
+            f"Come back in 24 hours for your next reward!"
+        )
+    else:
+        await message.answer(
+            f"⏳ Already claimed today!\n\n"
+            f"Next reward in: <b>{result['hours']}h {result['minutes']}m</b>"
+        )
+
+
+# ─────────────────────────────────────────────
+# /sponsors — View and sign sponsors
+# ─────────────────────────────────────────────
+
+@router.message(Command("sponsors"))
+@router.message(F.text == "💰 Sponsors")
+async def cmd_sponsors(message: Message):
+    from src.simulation.driver_db import SPONSORS
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first!")
+            return
+
+        data = await TeamService(db).get_with_drivers(team.id)
+        active_sponsors = data.get("sponsors", [])
+
+    text = "💰 <b>Sponsors</b>\n\n"
+
+    if active_sponsors:
+        text += "<b>Your Active Sponsors:</b>\n"
+        for sp_data in active_sponsors:
+            sp = sp_data["sponsor"]
+            contract = sp_data["contract"]
+            text += (
+                f"  🏷️ <b>{safe(sp.name)}</b> [{sp.tier.title()}]\n"
+                f"  Reward: ${sp.reward:,} | Races left: {sp.contract_races - contract.races_completed}\n\n"
+            )
+    else:
+        text += "No active sponsors.\n\n"
+
+    text += "<b>Available Sponsors:</b>\n"
+    tier_emoji = {"small": "🥉", "medium": "🥈", "premium": "🥇", "title": "👑"}
+    for sp in SPONSORS[:10]:
+        emoji = tier_emoji.get(sp.get("tier", "small"), "🏷️")
+        req = f"Top {sp['target_position']}" if sp.get("target_position") else f"{sp.get('target_points', 0)}+ pts"
+        text += (
+            f"{emoji} <b>{safe(sp['name'])}</b>\n"
+            f"  ${sp['reward']:,} | Req: {req} | Min Rep: {sp.get('min_reputation', 0)}\n"
+        )
+
+    text += "\n<i>Sponsors pay out automatically after each race based on performance.</i>"
+    await message.answer(text)
+
+
+# ─────────────────────────────────────────────
+# /research — Research tree
+# ─────────────────────────────────────────────
+
+@router.message(Command("research"))
+@router.message(F.text == "🔬 Research")
+async def cmd_research(message: Message):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first!")
+            return
+
+    await message.answer(
+        f"🔬 <b>Research & Development</b>\n\n"
+        f"Research Points: <b>{team.research_points}</b>\n\n"
+        f"Choose a research tree to develop:",
+        reply_markup=research_kb(team.id)
+    )
+
+
+@router.callback_query(F.data.startswith("research:tree:"))
+async def cb_research_tree(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    team_id, tree = int(parts[2]), parts[3]
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!")
+            return
+
+        status = await ResearchService(db).get_tree_status(team.id, tree)
+
+    tree_labels = {
+        "power_unit": "⚡ Power Unit",
+        "aero": "🌬️ Aerodynamics",
+        "weight_reduction": "⚖️ Weight Reduction",
+        "reliability": "🔧 Reliability",
+        "tyres": "🛞 Tyre Tech",
+    }
+
+    text = (
+        f"🔬 <b>{tree_labels.get(tree, tree)}</b>\n\n"
+        f"Research Points: <b>{team.research_points}</b>\n\n"
+    )
+
+    nodes = status.get("nodes", [])
+    if not nodes:
+        text += "No research nodes available."
+    else:
+        for node in nodes:
+            done = "✅" if node["is_complete"] else "🔒"
+            text += (
+                f"{done} <b>{safe(node['name'])}</b>\n"
+                f"  Cost: {node['rp_cost']} RP + ${node['money_cost']:,}\n"
+                f"  Bonus: +{node['stat_bonus']} to {safe(node['affects'])}\n"
+                f"  Use: /research {tree} {node['key']}\n\n"
+            )
+
+    await callback.message.edit_text(text, reply_markup=research_kb(team.id))
+    await callback.answer()
+
+
+@router.message(Command("research"))
+async def cmd_research_buy(message: Message):
+    parts = message.text.split()
+    if len(parts) < 3:
+        return  # handled by the F.text handler above
+
+    tree, node_key = parts[1], parts[2]
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first!")
+            return
+        success, msg = await ResearchService(db).start_research(team.id, tree, node_key)
+        await db.commit()
+    await message.answer("✅ " + msg if success else "❌ " + msg)
+
+
+# ─────────────────────────────────────────────
+# /help — Command list
+# ─────────────────────────────────────────────
+
+@router.message(Command("help"))
+async def cmd_help(message: Message):
+    text = (
+        "📖 <b>F1 Management Bot — Commands</b>\n\n"
+        "<b>Team:</b>\n"
+        "  /register — Create your team\n"
+        "  /team — View your team\n"
+        "  /upgrade — Upgrade car stats\n"
+        "  /renameteam — Rename your team\n"
+        "  /deleteteam — Delete your team\n\n"
+        "<b>League:</b>\n"
+        "  /league — View league info\n"
+        "  /startseason — Start season (owner)\n"
+        "  /runrace — Run next race (owner)\n"
+        "  /leaveleague — Leave league\n"
+        "  /deleteleague — Delete league (owner)\n\n"
+        "<b>Drivers:</b>\n"
+        "  /market — Driver market\n"
+        "  /buydriver &lt;id&gt; — Sign driver\n"
+        "  /selldriver &lt;id&gt; [price] — Sell driver\n"
+        "  /bid &lt;listing_id&gt; &lt;amount&gt; — Place bid\n\n"
+        "<b>Staff:</b>\n"
+        "  /staffmarket — Browse staff\n"
+        "  /hirestaff &lt;id&gt; — Hire staff\n"
+        "  /mystaff — View your staff\n"
+        "  /firestaff &lt;contract_id&gt; — Release staff\n\n"
+        "<b>Race:</b>\n"
+        "  /strategy — Set race strategy\n"
+        "  /practice — Practice session\n\n"
+        "<b>Other:</b>\n"
+        "  /standings — Championship standings\n"
+        "  /research — R&D tree\n"
+        "  /sponsors — View sponsors\n"
+        "  /daily — Daily reward\n"
+        "  /budget — Budget breakdown\n"
+    )
+    await message.answer(text)

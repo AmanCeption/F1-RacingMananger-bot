@@ -87,9 +87,14 @@ async def run_bot():
     logger.info("Scheduler started")
 
     await bot.delete_webhook(drop_pending_updates=True)
+    await asyncio.sleep(3)  # Wait for old instance to fully stop
     logger.info("Bot started successfully!")
 
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    await dp.start_polling(
+        bot,
+        allowed_updates=dp.resolve_used_update_types(),
+        handle_signals=False,  # Let Render handle SIGTERM cleanly
+    )
 
 
 # ── Run both together ────────────────────────

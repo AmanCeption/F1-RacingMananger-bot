@@ -62,6 +62,10 @@ class RenameTeamStates(StatesGroup):
     waiting_newname = State()
 
 
+class DeleteLeagueStates(StatesGroup):
+    waiting_confirm = State()
+
+
 # ─────────────────────────────────────────────
 # START & REGISTER
 # ─────────────────────────────────────────────
@@ -1631,6 +1635,7 @@ async def cmd_deleteleague(message: Message, state: FSMContext):
             return
 
     await state.update_data(league_id=team.league_id, league_name=league.name)
+    await state.set_state(DeleteLeagueStates.waiting_confirm)
     await message.answer(
         f"⚠️ <b>League Delete Karna Chahte Ho?</b>\n\n"
         f"League: <b>{safe(league.name)}</b>\n\n"
@@ -1639,28 +1644,10 @@ async def cmd_deleteleague(message: Message, state: FSMContext):
         f"<code>{safe(league.name)}</code>\n\n"
         f"Cancel ke liye /start bhejo"
     )
-    from aiogram.fsm.state import State, StatesGroup
-
-    class _DeleteLeagueConfirm(StatesGroup):
-        waiting = State()
-
-    await state.set_state("deleteleague_confirm")
 
 
-@router.message(F.text, flags={"deleteleague_confirm": True})
-async def _noop():
-    pass
-
-
-# Use a simple approach — check state string
-from aiogram.fsm.context import FSMContext as _FSMCtx
-
-@router.message(F.text)
-async def deleteleague_confirm_handler(message: Message, state: FSMContext):
-    current = await state.get_state()
-    if current != "deleteleague_confirm":
-        return
-
+@router.message(DeleteLeagueStates.waiting_confirm)
+async def deleteleague_confirm(message: Message, state: FSMContext):
     data = await state.get_data()
     league_name = data.get("league_name", "")
     league_id = data.get("league_id")

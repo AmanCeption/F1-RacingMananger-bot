@@ -250,7 +250,7 @@ async def cmd_admin(message: Message):
         "/banplayer userid reason\n"
         "/unbanplayer userid\n"
         "/forcerace leagueid\n"
-        "/broadcast message"
+        "/broadcast &lt;message&gt; — sends to ALL users"
     )
 
 
@@ -511,7 +511,52 @@ async def cmd_broadcast(message: Message):
         return
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.answer("Usage: /broadcast message")
+        await message.answer(
+            "Usage: /broadcast &lt;message&gt;\n\n"
+            "Example: /broadcast Server maintenance at 10PM tonight!"
+        )
         return
-    await message.answer(f"📢 Broadcast sent:\n\n{parts[1]}")
+
+    broadcast_text = parts[1]
+
+    # Fetch all user IDs from DB
+    async with get_session() as db:
+        user_ids = await AdminService(db).get_all_user_ids()
+
+    if not user_ids:
+        await message.answer("❌ No users found in database.")
+        return
+
+    total = len(user_ids)
+    sent = 0
+    failed = 0
+
+    status_msg = await message.answer(
+        f"📡 Broadcasting to <b>{total}</b> users...\n"
+        f"⏳ Please wait..."
+    )
+
+    # Full formatted broadcast message
+    full_text = (
+        f"📢 <b>Announcement from F1 Bot</b>\n"
+        f"{'─' * 30}\n\n"
+        f"{broadcast_text}\n\n"
+        f"<i>— F1 Management Bot Team</i>"
+    )
+
+    for user_id in user_ids:
+        try:
+            await message.bot.send_message(user_id, full_text, parse_mode="HTML")
+            sent += 1
+        except Exception:
+            failed += 1
+        # Small delay to avoid Telegram rate limits (30 msgs/sec max)
+        await asyncio.sleep(0.05)
+
+    await status_msg.edit_text(
+        f"✅ <b>Broadcast Complete!</b>\n\n"
+        f"📨 Sent: <b>{sent}</b>\n"
+        f"❌ Failed: <b>{failed}</b> (blocked/deleted bot)\n"
+        f"👥 Total: <b>{total}</b>"
+    )
     

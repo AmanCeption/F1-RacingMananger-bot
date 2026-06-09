@@ -21,7 +21,7 @@ from src.core.config import settings, F1_POINTS, F1_CALENDAR
 from src.simulation.driver_db import REAL_DRIVERS, FICTIONAL_DRIVERS, STAFF_DATABASE, SPONSORS, ACHIEVEMENTS, RESEARCH_TREES
 from src.simulation.race_engine import (
     CarEntry, simulate_race, simulate_qualifying, generate_practice_report,
-    generate_weather, Weather
+    generate_weather, Weather, generate_staff_race_insights
 )
 
 logger = logging.getLogger(__name__)
@@ -620,6 +620,37 @@ class RaceService:
         race.status = RaceStatus.FINISHED
         race.finished_at = datetime.utcnow()
         race.race_log = result["events"]
+
+        # Generate staff insights per team
+        team_insights = {}
+        next_race_result = await self.db.execute(
+            select(Race).where(
+                and_(Race.league_id == league_id, Race.status == RaceStatus.SCHEDULED)
+            ).order_by(Race.race_number)
+        )
+        next_race = next_race_result.scalars().first()
+        next_circuit = next_race.circuit if next_race else "the next race"
+
+        for team in teams:
+            staff_result = await self.db.execute(
+                select(TeamStaff, Staff)
+                .join(Staff, TeamStaff.staff_id == Staff.id)
+                .where(TeamStaff.team_id == team.id)
+            )
+            team_staff = staff_result.all()
+            if team_staff:
+                team_stats = {
+                    "engine": team.engine,
+                    "aerodynamics": team.aerodynamics,
+                    "chassis": team.chassis,
+                    "reliability": team.reliability,
+                    "tyres": team.tyres,
+                    "pit_crew": team.pit_crew,
+                }
+                team_insights[team.id] = generate_staff_race_insights(
+                    team_staff, result, team.id, team_stats, next_circuit
+                )
+        result["staff_insights"] = team_insights
 
         # Update league race counter
         league_result = await self.db.execute(select(League).where(League.id == league_id))

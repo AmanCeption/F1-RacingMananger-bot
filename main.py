@@ -53,6 +53,22 @@ async def run_migrations():
                     """))
                 except Exception:
                     pass  # table may not exist yet
+
+            # Fix races.league_id FK — allow NULL when league is deleted
+            try:
+                await conn.execute(text("""
+                    DO $$ BEGIN
+                        ALTER TABLE races DROP CONSTRAINT IF EXISTS races_league_id_fkey;
+                        ALTER TABLE races ADD CONSTRAINT races_league_id_fkey
+                            FOREIGN KEY (league_id) REFERENCES leagues(id) ON DELETE SET NULL;
+                    END $$;
+                """))
+                # Allow NULL in existing rows if any orphaned races exist
+                await conn.execute(text("""
+                    ALTER TABLE races ALTER COLUMN league_id DROP NOT NULL;
+                """))
+            except Exception as e:
+                logger.warning(f"races FK migration warning: {e}")
         logger.info("✅ Migrations applied successfully")
     except Exception as e:
         logger.warning(f"Migration warning (non-fatal): {e}")

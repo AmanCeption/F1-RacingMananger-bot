@@ -417,6 +417,10 @@ class LeagueService:
         await self.db.execute(
             update(Team).where(Team.league_id == league_id).values(league_id=None)
         )
+        # Delete races belonging to this league before deleting the league
+        await self.db.execute(
+            delete(Race).where(Race.league_id == league_id)
+        )
         await self.db.delete(league)
         await self.db.flush()
         await self.db.commit()

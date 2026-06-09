@@ -414,10 +414,11 @@ class LeagueService:
         if league.status == LeagueStatus.ACTIVE and not force:
             return False, "Cannot delete a league during an active season!"
 
-        await self.db.execute(
-            update(Team).where(Team.league_id == league_id).values(league_id=None)
-        )
-        # Delete race dependents first (FK constraints), then races
+        # 1. Standings delete karo (league_id FK block karta hai)
+        await self.db.execute(delete(DriverStanding).where(DriverStanding.league_id == league_id))
+        await self.db.execute(delete(ConstructorStanding).where(ConstructorStanding.league_id == league_id))
+
+        # 2. Race results/strategies/qualifying delete karo
         race_ids_result = await self.db.execute(
             select(Race.id).where(Race.league_id == league_id)
         )
@@ -426,9 +427,19 @@ class LeagueService:
             await self.db.execute(delete(RaceResult).where(RaceResult.race_id.in_(race_ids)))
             await self.db.execute(delete(RaceStrategy).where(RaceStrategy.race_id.in_(race_ids)))
             await self.db.execute(delete(QualifyingResult).where(QualifyingResult.race_id.in_(race_ids)))
+
+        # 3. Races delete karo
+        await self.db.execute(delete(Race).where(Race.league_id == league_id))
+
+        # 4. Seasons delete karo
+        await self.db.execute(delete(Season).where(Season.league_id == league_id))
+
+        # 5. Teams ko league se detach karo
         await self.db.execute(
-            delete(Race).where(Race.league_id == league_id)
+            update(Team).where(Team.league_id == league_id).values(league_id=None)
         )
+
+        # 6. League delete karo
         await self.db.delete(league)
         await self.db.flush()
         await self.db.commit()

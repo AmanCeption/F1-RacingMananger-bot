@@ -419,6 +419,7 @@ class LeagueService:
         )
         await self.db.delete(league)
         await self.db.flush()
+        await self.db.commit()
         return True, f"League '{league.name}' deleted."
 
 

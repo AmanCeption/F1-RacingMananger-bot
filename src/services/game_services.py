@@ -192,6 +192,35 @@ class TeamService:
         await self.db.flush()
         return True, f"Upgraded to Level {current + 1}!"
 
+
+    async def delete(self, owner_id: int) -> tuple[bool, str]:
+        team = await self.get_by_owner(owner_id)
+        if not team:
+            return False, "Team not found!"
+        if team.league_id:
+            from src.models.models import League, LeagueStatus
+            league_result = await self.db.execute(
+                select(League).where(League.id == team.league_id)
+            )
+            league = league_result.scalar_one_or_none()
+            if league and league.status == LeagueStatus.ACTIVE:
+                return False, "Cannot delete team during an active league season!"
+        await self.db.delete(team)
+        await self.db.flush()
+        return True, "Team deleted."
+
+    async def rename(self, owner_id: int, new_name: str) -> tuple[bool, str]:
+        if len(new_name) < 3:
+            return False, "Name too short! Min 3 characters."
+        if len(new_name) > 30:
+            return False, "Name too long! Max 30 characters."
+        team = await self.get_by_owner(owner_id)
+        if not team:
+            return False, "Team not found!"
+        team.name = new_name
+        await self.db.flush()
+        return True, new_name
+
     async def set_car_setup(self, team_id: int, driver_id: int, setup: dict, race_id: int) -> bool:
         # Store in race strategy
         existing = await self.db.execute(
@@ -318,6 +347,43 @@ class LeagueService:
             ).limit(10)
         )
         return result.scalars().all()
+
+    async def leave(self, team_id: int) -> tuple[bool, str]:
+        team = await TeamService(self.db).get(team_id)
+        if not team or not team.league_id:
+            return False, "You are not in any league!"
+
+        result = await self.db.execute(select(League).where(League.id == team.league_id))
+        league = result.scalar_one_or_none()
+        if not league:
+            return False, "League not found!"
+
+        if league.owner_id == team.owner_id:
+            return False, "You are the league owner! Delete the league first."
+
+        if league.status == LeagueStatus.ACTIVE:
+            return False, "Cannot leave a league mid-season!"
+
+        team.league_id = None
+        await self.db.flush()
+        return True, f"You have left {league.name}."
+
+    async def delete(self, owner_id: int, league_id: int) -> tuple[bool, str]:
+        result = await self.db.execute(select(League).where(League.id == league_id))
+        league = result.scalar_one_or_none()
+        if not league:
+            return False, "League not found!"
+        if league.owner_id != owner_id:
+            return False, "You are not the league owner!"
+        if league.status == LeagueStatus.ACTIVE:
+            return False, "Cannot delete a league during an active season!"
+
+        await self.db.execute(
+            update(Team).where(Team.league_id == league_id).values(league_id=None)
+        )
+        await self.db.delete(league)
+        await self.db.flush()
+        return True, f"League '{league.name}' deleted."
 
 
 # ─────────────────────────────────────────────

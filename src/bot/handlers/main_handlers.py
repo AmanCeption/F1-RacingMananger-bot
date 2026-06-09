@@ -18,6 +18,8 @@ from src.bot.keyboards.keyboards import (
     tyre_selection_kb, market_kb, league_kb, research_kb, pagination_kb
 )
 from src.core.config import settings, F1_POINTS
+from sqlalchemy import select, and_
+from src.models.models import Staff, TeamStaff, Team
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -561,8 +563,8 @@ async def cmd_bid(message: Message):
     try:
         listing_id = int(parts[1])
         amount = int(parts[2])
-    except ValueError:
-        await message.answer("❌ Invalid values!")
+    except (ValueError, IndexError):
+        await message.answer("❌ Invalid format! Use: /bid <listing_id> <amount>")
         return
 
     async with get_session() as db:
@@ -576,1092 +578,284 @@ async def cmd_bid(message: Message):
 
 
 # ─────────────────────────────────────────────
-# LEAGUE COMMANDS
+# ROLE DISPLAY HELPERS
 # ─────────────────────────────────────────────
 
-@router.message(Command("leagues"))
-@router.message(F.text == "👥 League")
-async def cmd_leagues(message: Message):
-    await message.answer(
-        "👥 <b>League System</b>\n\nCompete in leagues against other managers!",
-        reply_markup=league_kb()
-    )
-
-
-@router.callback_query(F.data == "league:create")
-async def cb_league_create(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(callback.from_user.id)
-        if not team:
-            await callback.message.answer("❌ Register first with /register!")
-            return
-    await state.set_state(LeagueCreateStates.waiting_name)
-    await callback.message.answer("🏆 <b>Create a League</b>\n\nEnter your league name:")
-
-
-@router.callback_query(F.data == "league:join")
-async def cb_league_join(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(callback.from_user.id)
-        if not team:
-            await callback.message.answer("❌ Register first with /register!")
-            return
-        if team.league_id:
-            await callback.message.answer("❌ You're already in a league! Use /leaveleague to leave first.")
-            return
-    await state.set_state(LeagueJoinStates.waiting_code)
-    await callback.message.answer("🔗 Enter the league invite code:")
-
-
-@router.callback_query(F.data == "league:public")
-async def cb_league_public(callback: CallbackQuery):
-    await callback.answer()
-    async with get_session() as db:
-        leagues = await LeagueService(db).list_public()
-        league_data = []
-        for lg in leagues:
-            from sqlalchemy import select as sql_select, func as sql_func
-            from src.models.models import Team as TeamModel
-            count_result = await db.execute(
-                sql_select(sql_func.count(TeamModel.id)).where(TeamModel.league_id == lg.id)
-            )
-            member_count = count_result.scalar() or 0
-            league_data.append((lg, member_count))
-
-    if not league_data:
-        await callback.message.answer("😔 No public leagues available right now.\nCreate one with /createleague!")
-        return
-
-    text = "🌍 <b>Public Leagues:</b>\n\n"
-    for lg, count in league_data:
-        status_icon = "🟢" if lg.status.value == "waiting" else "🔴"
-        text += (
-            f"{status_icon} <b>{safe(lg.name)}</b>\n"
-            f"  👥 Teams: {count}/{lg.max_teams}\n"
-            f"  🔑 Code: <code>{lg.invite_code}</code>\n\n"
-        )
-    text += "Use /joinleague to join with invite code!"
-    await callback.message.answer(text)
-
-
-@router.callback_query(F.data == "league:mine")
-async def cb_league_mine(callback: CallbackQuery):
-    await callback.answer()
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(callback.from_user.id)
-        if not team or not team.league_id:
-            await callback.message.answer(
-                "❌ You're not in any league yet!\n"
-                "Use /joinleague or /createleague"
-            )
-            return
-
-        from sqlalchemy import select as sql_select
-        from src.models.models import League as LeagueModel, Team as TeamModel
-        league_result = await db.execute(
-            sql_select(LeagueModel).where(LeagueModel.id == team.league_id)
-        )
-        league = league_result.scalar_one_or_none()
-        if not league:
-            await callback.message.answer("❌ League not found!")
-            return
-
-        # Get all members
-        members_result = await db.execute(
-            sql_select(TeamModel).where(TeamModel.league_id == league.id)
-        )
-        members = members_result.scalars().all()
-
-    member_list = ""
-    for i, m in enumerate(members, 1):
-        you = " 👈 You" if m.id == team.id else ""
-        owner = " 👑" if m.owner_id == league.owner_id else ""
-        member_list += f"  {i}. {safe(m.name)}{owner}{you}\n"
-
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    from aiogram.types import InlineKeyboardButton
-    builder = InlineKeyboardBuilder()
-    is_owner = league.owner_id == callback.from_user.id
-    if is_owner:
-        builder.row(InlineKeyboardButton(
-            text="🗑️ Delete League",
-            callback_data=f"league:delete_confirm:{league.id}"
-        ))
-
-    await callback.message.answer(
-        f"ℹ️ <b>Your League</b>\n\n"
-        f"🏆 Name: <b>{safe(league.name)}</b>\n"
-        f"🔑 Invite Code: <code>{league.invite_code}</code>\n"
-        f"{'🔒 Private' if league.password else '🌍 Public'}\n"
-        f"📊 Status: {league.status.value.title()}\n"
-        f"👥 Teams ({len(members)}/{league.max_teams}):\n"
-        f"{member_list}",
-        reply_markup=builder.as_markup() if is_owner else None
-    )
-
-
-@router.callback_query(F.data.startswith("league:delete_confirm:"))
-async def cb_league_delete_confirm(callback: CallbackQuery):
-    await callback.answer()
-    league_id = int(callback.data.split(":")[2])
-
-    async with get_session() as db:
-        from sqlalchemy import select as sql_select
-        from src.models.models import League as LeagueModel
-        result = await db.execute(sql_select(LeagueModel).where(LeagueModel.id == league_id))
-        league = result.scalar_one_or_none()
-        if not league:
-            await callback.message.answer("❌ League not found!")
-            return
-        if league.owner_id != callback.from_user.id:
-            await callback.message.answer("❌ Sirf league owner delete kar sakta hai!")
-            return
-
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    from aiogram.types import InlineKeyboardButton
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="✅ Haan, Delete Karo", callback_data=f"league:delete_do:{league_id}"),
-        InlineKeyboardButton(text="❌ Cancel", callback_data="league:delete_cancel")
-    )
-
-    await callback.message.answer(
-        f"⚠️ <b>League Delete Karna Chahte Ho?</b>\n\n"
-        f"🏆 League: <b>{safe(league.name)}</b>\n\n"
-        f"❗ Yeh permanent hai! Saare members league se remove ho jayenge.\n\n"
-        f"Confirm karo:",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data.startswith("league:delete_do:"))
-async def cb_league_delete_do(callback: CallbackQuery):
-    await callback.answer()
-    league_id = int(callback.data.split(":")[2])
-
-    async with get_session() as db:
-        from sqlalchemy import select as sql_select, delete as sql_delete
-        from src.models.models import (
-            League as LeagueModel, Team as TeamModel,
-            Race, RaceResult, RaceStrategy, ConstructorStanding,
-            DriverStanding, Season
-        )
-
-        result = await db.execute(sql_select(LeagueModel).where(LeagueModel.id == league_id))
-        league = result.scalar_one_or_none()
-        if not league:
-            await callback.message.answer("❌ League not found!")
-            return
-        if league.owner_id != callback.from_user.id:
-            await callback.message.answer("❌ Permission denied!")
-            return
-
-        league_name = league.name
-
-        # Saare teams ko league se remove karo
-        await db.execute(
-            TeamModel.__table__.update()
-            .where(TeamModel.league_id == league_id)
-            .values(league_id=None)
-        )
-
-        # Related data delete karo
-        races_result = await db.execute(
-            sql_select(Race.id).where(Race.league_id == league_id)
-        )
-        race_ids = [r[0] for r in races_result.all()]
-
-        if race_ids:
-            await db.execute(sql_delete(RaceResult).where(RaceResult.race_id.in_(race_ids)))
-            await db.execute(sql_delete(RaceStrategy).where(RaceStrategy.race_id.in_(race_ids)))
-
-        await db.execute(sql_delete(ConstructorStanding).where(ConstructorStanding.league_id == league_id))
-        await db.execute(sql_delete(DriverStanding).where(DriverStanding.league_id == league_id))
-        await db.execute(sql_delete(Season).where(Season.league_id == league_id))
-        await db.execute(sql_delete(Race).where(Race.league_id == league_id))
-        await db.execute(sql_delete(LeagueModel).where(LeagueModel.id == league_id))
-
-    await callback.message.edit_text(
-        f"✅ <b>League Delete Ho Gayi!</b>\n\n"
-        f"<b>{safe(league_name)}</b> permanently delete ho gayi.\n"
-        f"Saare members ab free hain naya league join karne ke liye."
-    )
-
-
-@router.callback_query(F.data == "league:delete_cancel")
-async def cb_league_delete_cancel(callback: CallbackQuery):
-    await callback.answer("Cancelled ✅")
-    await callback.message.edit_text("❌ League delete cancel ho gayi.")
-
-
-@router.message(Command("createleague"))
-async def cmd_create_league(message: Message, state: FSMContext):
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
-        if not team:
-            await message.answer("❌ Register first!")
-            return
-
-    await state.set_state(LeagueCreateStates.waiting_name)
-    await message.answer("🏆 <b>Create a League</b>\n\nEnter your league name:")
-
-
-@router.message(LeagueCreateStates.waiting_name)
-async def league_create_name(message: Message, state: FSMContext):
-    name = message.text.strip()
-    if len(name) < 3 or len(name) > 40:
-        await message.answer("❌ League name must be 3-40 characters!")
-        return
-    await state.update_data(name=name)
-    await state.set_state(LeagueCreateStates.waiting_password)
-    await message.answer(
-        f"League name: <b>{name}</b>\n\n"
-        "Set a password for private access? (or type 'skip' for public league)"
-    )
-
-
-@router.message(LeagueCreateStates.waiting_password)
-async def league_create_password(message: Message, state: FSMContext):
-    data = await state.get_data()
-    password = None if message.text.lower() == "skip" else message.text.strip()
-    is_public = password is None
-
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
-        try:
-            league = await LeagueService(db).create(
-                owner_id=message.from_user.id,
-                name=data["name"],
-                is_public=is_public,
-                password=password,
-            )
-            await state.clear()
-            await message.answer(
-                f"✅ <b>League Created!</b>\n\n"
-                f"🏆 Name: <b>{league.name}</b>\n"
-                f"🔑 Invite Code: <code>{league.invite_code}</code>\n"
-                f"{'🔒 Private' if password else '🌍 Public'}\n\n"
-                f"Share the invite code with friends!\n"
-                f"Use /startseason to begin racing when ready."
-            )
-        except ValueError as e:
-            await message.answer(f"❌ {e}")
-            await state.clear()
-
-
-@router.message(Command("joinleague"))
-async def cmd_join_league(message: Message, state: FSMContext):
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
-        if not team:
-            await message.answer("❌ Register first!")
-            return
-        if team.league_id:
-            await message.answer("❌ You're already in a league! Use /leaveleague to leave first.")
-            return
-
-    await state.set_state(LeagueJoinStates.waiting_code)
-    await message.answer("🔗 Enter the league invite code:")
-
-
-@router.message(LeagueJoinStates.waiting_code)
-async def league_join_code(message: Message, state: FSMContext):
-    code = message.text.strip().upper()
-    await state.update_data(code=code)
-
-    async with get_session() as db:
-        league = await LeagueService(db).get_by_invite(code)
-        if not league:
-            await message.answer("❌ Invalid invite code!")
-            await state.clear()
-            return
-
-        if league.password:
-            await state.set_state(LeagueJoinStates.waiting_password)
-            await message.answer(f"🔒 <b>{league.name}</b> requires a password.\nEnter it:")
-        else:
-            team = await TeamService(db).get_by_owner(message.from_user.id)
-            success, msg = await LeagueService(db).join(team.id, code)
-            await state.clear()
-            await message.answer("✅ " + msg if success else "❌ " + msg)
-
-
-@router.message(LeagueJoinStates.waiting_password)
-async def league_join_password(message: Message, state: FSMContext):
-    data = await state.get_data()
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
-        success, msg = await LeagueService(db).join(team.id, data["code"], message.text.strip())
-        await state.clear()
-        await message.answer("✅ " + msg if success else "❌ " + msg)
-
-
-@router.message(Command("startseason"))
-async def cmd_start_season(message: Message):
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
-        if not team or not team.league_id:
-            await message.answer("❌ You must be in a league to start a season!")
-            return
-
-        success, msg = await LeagueService(db).start_season(team.league_id, message.from_user.id)
-        await message.answer("✅ " + msg if success else "❌ " + msg)
-
-
-# ─────────────────────────────────────────────
-# RESEARCH
-# ─────────────────────────────────────────────
-
-@router.message(Command("research"))
-@router.message(F.text == "🔬 Research")
-async def cmd_research(message: Message):
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
-        if not team:
-            await message.answer("❌ Register first!")
-            return
-
-        await message.answer(
-            f"🔬 <b>Research Department</b>\n\n"
-            f"Available RP: <b>{team.research_points}</b>\n\n"
-            f"Choose a research tree to explore:",
-            reply_markup=research_kb(team.id)
-        )
-
-
-@router.callback_query(F.data.startswith("research:tree:"))
-async def research_tree(callback: CallbackQuery):
-    parts = callback.data.split(":")
-    team_id, tree = int(parts[2]), parts[3]
-
-    async with get_session() as db:
-        team = await TeamService(db).get(team_id)
-        status = await ResearchService(db).get_tree_status(team_id, tree)
-
-        tree_names = {
-            "power_unit": "⚡ Power Unit", "aero": "🌬️ Aerodynamics",
-            "weight_reduction": "⚖️ Weight Reduction", "reliability": "🔧 Reliability",
-            "tyres": "🛞 Tyre Technology"
-        }
-
-        text = f"🔬 <b>{tree_names.get(tree, tree)}</b>\n\n"
-        text += f"Your RP: <b>{team.research_points}</b>\n\n"
-
-        from aiogram.utils.keyboard import InlineKeyboardBuilder
-        from aiogram.types import InlineKeyboardButton
-        builder = InlineKeyboardBuilder()
-
-        for node in status["nodes"]:
-            if node["done"]:
-                text += f"✅ {node['name']} (Done, +{node['stat_bonus']} {node['stat']})\n"
-            else:
-                text += (
-                    f"🔬 {node['name']}\n"
-                    f"  Cost: {node['rp_cost']} RP + ${node['money_cost']:,}\n"
-                    f"  Bonus: +{node['stat_bonus']} {node['stat'].replace('_', ' ').title()}\n\n"
-                )
-                builder.button(
-                    text=f"Research {node['name']}",
-                    callback_data=f"research:do:{team_id}:{tree}:{node['node']}"
-                )
-
-        builder.adjust(1)
-        builder.row(InlineKeyboardButton(text="◀️ Back", callback_data="research:back"))
-
-        await callback.message.edit_text(text, reply_markup=builder.as_markup())
-        await callback.answer()
-
-
-@router.callback_query(F.data.startswith("research:do:"))
-async def research_do(callback: CallbackQuery):
-    parts = callback.data.split(":")
-    team_id, tree, node = int(parts[2]), parts[3], parts[4]
-
-    async with get_session() as db:
-        success, msg = await ResearchService(db).start_research(team_id, tree, node)
-        await callback.answer("✅ " + msg if success else "❌ " + msg, show_alert=True)
-        if success:
-            # Refresh tree view
-            status = await ResearchService(db).get_tree_status(team_id, tree)
-            team = await TeamService(db).get(team_id)
-            await callback.message.edit_text(
-                f"✅ Research complete!\n\n{msg}\n\nRP remaining: {team.research_points}"
-            )
-
-
-# ─────────────────────────────────────────────
-# DAILY REWARD
-# ─────────────────────────────────────────────
-
-@router.message(Command("daily"))
-@router.message(F.text == "🎁 Daily Reward")
-async def cmd_daily(message: Message):
-    async with get_session() as db:
-        svc = UserService(db)
-        result = await svc.claim_daily(message.from_user.id)
-
-        if not result:
-            await message.answer("❌ Register first!")
-            return
-
-        if not result["available"]:
-            await message.answer(
-                f"⏳ Daily reward already claimed!\n\n"
-                f"Come back in <b>{result['hours']}h {result['minutes']}m</b>"
-            )
-        else:
-            await message.answer(
-                f"🎁 <b>Daily Reward Claimed!</b>\n\n"
-                f"💰 +${result['money']:,}\n"
-                f"🔬 +{result['rp']} Research Points\n\n"
-                f"Come back tomorrow for more!"
-            )
-
-
-# ─────────────────────────────────────────────
-# HELP
-# ─────────────────────────────────────────────
-
-@router.message(Command("help"))
-async def cmd_help(message: Message):
-    await message.answer(
-        "📋 <b>F1 Management Bot — Commands</b>\n\n"
-        "<b>Registration:</b>\n"
-        "/start — Main menu\n"
-        "/register — Create your team\n\n"
-        "<b>Team Management:</b>\n"
-        "/team — View your team\n"
-        "/budget — Budget overview\n"
-        "/upgrade — Upgrade car stats\n"
-        "/garage — Detailed car info\n\n"
-        "<b>Drivers & Staff:</b>\n"
-        "/market — Driver transfer market\n"
-        "/buydriver <id> — Sign a driver\n"
-        "/selldriver <id> [price] — List for transfer\n"
-        "/bid <id> <amount> — Bid on auction\n\n"
-        "<b>Race Weekend:</b>\n"
-        "/practice — Practice session report\n"
-        "/strategy — Set race strategy\n"
-        "/setup — Adjust car setup\n\n"
-        "<b>League:</b>\n"
-        "/createleague — Create a league\n"
-        "/joinleague — Join with invite code\n"
-        "/leaveleague — Leave current league\n"
-        "/leagues — Browse public leagues\n"
-        "/startseason — Start season (owner)\n\n"
-        "<b>Development:</b>\n"
-        "/research — Research tree\n"
-        "/sponsors — Manage sponsors\n\n"
-        "<b>Other:</b>\n"
-        "/standings — Championship standings\n"
-        "/daily — Claim daily reward\n"
-        "/achievements — View achievements\n\n"
-        "🏎️ <b>Good luck on track!</b>"
-    )
-"""
-DELETE TEAM HANDLER
-Yeh code main_handlers.py mein add karo:
-
-1. States section mein (top par jahan RegisterStates hai):
-
-2. Neeche handlers mein yeh do functions add karo
-"""
-
-
-
-@router.callback_query(F.data.startswith("market:transfers:"))
-async def market_transfers(callback: CallbackQuery):
-    page = int(callback.data.split(":")[2])
-    per_page = 5
-
-    async with get_session() as db:
-        listings = await DriverMarketService(db).get_transfer_listings()
-
-    total_pages = max(1, (len(listings) + per_page - 1) // per_page)
-    page_listings = listings[page * per_page:(page + 1) * per_page]
-
-    text = "💸 <b>Transfer List</b>\n\n"
-    for transfer, driver, team in page_listings:
-        text += (
-            f"<b>{safe(driver.name)}</b>\n"
-            f"  From: {safe(team.name) if team else 'Free Agent'}\n"
-            f"  Price: ${transfer.asking_price:,}\n"
-            f"  Command: /buydriver {driver.id}\n\n"
-        )
-
-    if not page_listings:
-        text += "No transfer listings right now."
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=pagination_kb("market:transfers", page, total_pages)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("market:auctions:"))
-async def market_auctions(callback: CallbackQuery):
-    page = int(callback.data.split(":")[2])
-    per_page = 5
-
-    async with get_session() as db:
-        from sqlalchemy import select
-        from src.models.models import DriverTransfer, Driver, Team, TransferStatus
-        result = await db.execute(
-            select(DriverTransfer, Driver)
-            .join(Driver, DriverTransfer.driver_id == Driver.id)
-            .where(
-                DriverTransfer.is_auction == True,
-                DriverTransfer.status == TransferStatus.PENDING
-            )
-        )
-        auctions = result.all()
-
-    total_pages = max(1, (len(auctions) + per_page - 1) // per_page)
-    page_auctions = auctions[page * per_page:(page + 1) * per_page]
-
-    text = "🔨 <b>Active Auctions</b>\n\n"
-    for transfer, driver in page_auctions:
-        current_bid = transfer.highest_bid or transfer.asking_price
-        text += (
-            f"<b>{safe(driver.name)}</b>\n"
-            f"  Current Bid: ${current_bid:,}\n"
-            f"  Skill: {driver.skill}/100\n"
-            f"  Bid: /bid {transfer.id} amount\n\n"
-        )
-
-    if not page_auctions:
-        text += "No active auctions right now.\n\nSell a driver with auction option:\n/selldriver driver_id 0 auction"
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=pagination_kb("market:auctions", page, total_pages)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "market:sell")
-async def market_sell_menu(callback: CallbackQuery):
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(callback.from_user.id)
-        if not team:
-            await callback.answer("Register first!", show_alert=True)
-            return
-
-        from sqlalchemy import select
-        from src.models.models import TeamDriver, Driver
-        result = await db.execute(
-            select(TeamDriver, Driver)
-            .join(Driver, TeamDriver.driver_id == Driver.id)
-            .where(TeamDriver.team_id == team.id)
-        )
-        drivers = result.all()
-
-    if not drivers:
-        await callback.answer("No drivers to sell!", show_alert=True)
-        return
-
-    text = "📤 <b>Sell a Driver</b>\n\nYour drivers:\n\n"
-    for td, d in drivers:
-        text += (
-            f"<b>{safe(d.name)}</b> | Skill: {d.skill}/100\n"
-            f"  Direct sale: /selldriver {d.id} price\n"
-            f"  Auction: /selldriver {d.id} 0 auction\n\n"
-        )
-
-    text += "Example: /selldriver 5 8000000"
-    await callback.message.edit_text(text)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("team:car:"))
-async def team_car_stats(callback: CallbackQuery):
-    team_id = int(callback.data.split(":")[2])
-    async with get_session() as db:
-        team = await TeamService(db).get(team_id)
-        if not team:
-            await callback.answer("Team not found!", show_alert=True)
-            return
-
-        car_rating = (team.engine + team.aerodynamics + team.chassis +
-                      team.reliability + team.tyres + team.pit_crew) // 6
-
-        text = (
-            f"🚗 <b>Car Stats — {safe(team.name)}</b>\n\n"
-            f"Overall Rating: <b>{car_rating}/100</b>\n\n"
-            f"⚙️ Engine:       {team.engine}/100\n"
-            f"🌬️ Aerodynamics: {team.aerodynamics}/100\n"
-            f"🏗️ Chassis:      {team.chassis}/100\n"
-            f"🔧 Reliability:  {team.reliability}/100\n"
-            f"🛞 Tyres:        {team.tyres}/100\n"
-            f"🔩 Pit Crew:     {team.pit_crew}/100\n\n"
-            f"Use /upgrade to improve stats!"
-        )
-        await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("team:drivers:"))
-async def team_drivers_info(callback: CallbackQuery):
-    team_id = int(callback.data.split(":")[2])
-    async with get_session() as db:
-        data = await TeamService(db).get_with_drivers(team_id)
-        drivers = data.get("drivers", [])
-
-        text = "👨‍🏎️ <b>Your Drivers</b>\n\n"
-        if not drivers:
-            text += "No drivers signed!\nUse /market to hire drivers."
-        else:
-            for d in drivers:
-                dr = d["driver"]
-                ct = d["contract"]
-                text += (
-                    f"<b>{safe(dr.name)}</b>\n"
-                    f"  Age: {dr.age} | {safe(dr.nationality)}\n"
-                    f"  Pace: {dr.pace} | Racecraft: {dr.racecraft}\n"
-                    f"  Consistency: {dr.consistency} | Wet: {dr.wet_weather}\n"
-                    f"  Salary: ${ct.salary:,}/yr\n\n"
-                )
-        await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("team:budget:"))
-async def team_budget_cb(callback: CallbackQuery):
-    team_id = int(callback.data.split(":")[2])
-    async with get_session() as db:
-        team = await TeamService(db).get(team_id)
-        data = await TeamService(db).get_with_drivers(team_id)
-        driver_sal = sum(d["contract"].salary for d in data["drivers"])
-        staff_sal = sum(s["contract"].salary for s in data["staff"])
-
-        text = (
-            f"💰 <b>Budget — {safe(team.name)}</b>\n\n"
-            f"Available: <b>${team.budget:,}</b>\n\n"
-            f"Driver Salaries: ${driver_sal:,}\n"
-            f"Staff Salaries: ${staff_sal:,}\n"
-            f"Total Expenses: ${driver_sal + staff_sal:,}"
-        )
-        await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("team:facilities:"))
-async def team_facilities_cb(callback: CallbackQuery):
-    team_id = int(callback.data.split(":")[2])
-    async with get_session() as db:
-        team = await TeamService(db).get(team_id)
-
-        text = (
-            f"🏭 <b>Facilities — {safe(team.name)}</b>\n\n"
-            f"🏭 Factory:     Level {team.factory_level}/5\n"
-            f"💨 Wind Tunnel: Level {team.wind_tunnel_level}/5 (+{team.wind_tunnel_level*5} RP/week)\n"
-            f"🖥️ Simulator:   Level {team.simulator_level}/5 (+{team.simulator_level*5} RP/week)\n"
-            f"🏢 HQ:          Level {team.hq_level}/5\n\n"
-            f"Upgrade costs:\n"
-            f"L1→L2: $10M | L2→L3: $25M\n"
-            f"L3→L4: $50M | L4→L5: $100M"
-        )
-        await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("team:staff:"))
-async def team_staff_cb(callback: CallbackQuery):
-    team_id = int(callback.data.split(":")[2])
-    async with get_session() as db:
-        data = await TeamService(db).get_with_drivers(team_id)
-        staff = data.get("staff", [])
-
-        text = "👷 <b>Your Staff</b>\n\n"
-        if not staff:
-            text += "No staff hired!"
-        else:
-            for s in staff:
-                st = s["staff"]
-                text += (
-                    f"<b>{safe(st.name)}</b>\n"
-                    f"  Role: {st.role.replace('_', ' ').title()}\n"
-                    f"  Skill: {st.skill}/100\n"
-                    f"  Salary: ${s['contract'].salary:,}/yr\n\n"
-                )
-    await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("team:achievements:"))
-async def team_achievements_cb(callback: CallbackQuery):
-    team_id = int(callback.data.split(":")[2])
-    async with get_session() as db:
-        from sqlalchemy import select
-        from src.models.models import TeamAchievement, Achievement
-        result = await db.execute(
-            select(TeamAchievement, Achievement)
-            .join(Achievement, TeamAchievement.achievement_id == Achievement.id)
-            .where(TeamAchievement.team_id == team_id)
-        )
-        achievements = result.all()
-
-        text = "🏅 <b>Achievements</b>\n\n"
-        if not achievements:
-            text += "No achievements yet!\nComplete races to earn them."
-        else:
-            for ta, a in achievements:
-                text += f"{a.icon} <b>{safe(a.name)}</b> — {safe(a.description)}\n"
-
-    await callback.message.edit_text(text, reply_markup=team_menu_kb(team_id))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("upgrade:menu:"))
-async def upgrade_menu_cb(callback: CallbackQuery):
-    team_id = int(callback.data.split(":")[2])
-    async with get_session() as db:
-        team = await TeamService(db).get(team_id)
-        text = (
-            f"⬆️ <b>Upgrade Car — {safe(team.name)}</b>\n\n"
-            f"Budget: ${team.budget:,}\n\n"
-            f"Select stat to upgrade (+3 each):"
-        )
-    await callback.message.edit_text(text, reply_markup=upgrade_menu_kb(team_id))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("team:menu:"))
-async def team_menu_cb(callback: CallbackQuery):
-    team_id = int(callback.data.split(":")[2])
-    async with get_session() as db:
-        team = await TeamService(db).get(team_id)
-        await callback.message.edit_text(
-            f"🏎️ <b>{safe(team.name)}</b> — What would you like to view?",
-            reply_markup=team_menu_kb(team_id)
-        )
-    await callback.answer()
-
-
-# ─────────────────────────────────────────────
-# RENAME TEAM
-# ─────────────────────────────────────────────
-
-@router.message(Command("renameteam"))
-async def cmd_rename_team(message: Message, state: FSMContext):
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
-        if not team:
-            await message.answer("❌ Tumhara koi team nahi hai!")
-            return
-
-        await state.set_state(RenameTeamStates.waiting_newname)
-        await state.update_data(team_id=team.id, old_name=team.name)
-        await message.answer(
-            f"✏️ <b>Team Rename</b>\n\n"
-            f"Current name: <b>{safe(team.name)}</b>\n\n"
-            f"Naya naam type karo (3-30 characters):\n"
-            f"Cancel ke liye /start bhejo"
-        )
-
-
-@router.message(RenameTeamStates.waiting_newname)
-async def rename_team_confirm(message: Message, state: FSMContext):
-    new_name = message.text.strip()
-
-    if len(new_name) < 3:
-        await message.answer("❌ Naam bahut short hai! Min 3 characters.")
-        return
-    if len(new_name) > 30:
-        await message.answer("❌ Naam bahut lamba hai! Max 30 characters.")
-        return
-
-    data = await state.get_data()
-    team_id = data.get("team_id")
-    old_name = data.get("old_name")
-
-    async with get_session() as db:
-        team = await TeamService(db).get(team_id)
-        if not team:
-            await message.answer("❌ Team not found!")
-            await state.clear()
-            return
-
-        team.name = new_name
-        await state.clear()
-        await message.answer(
-            f"✅ <b>Team Renamed!</b>\n\n"
-            f"Old name: {safe(old_name)}\n"
-            f"New name: <b>{safe(new_name)}</b>\n\n"
-            f"🏎️ Welcome to {safe(new_name)}!"
-        )
-
-# ─────────────────────────────────────────────
-# DELETE TEAM
-# ─────────────────────────────────────────────
-
-@router.message(Command("deleteteam"))
-async def cmd_delete_team(message: Message, state: FSMContext):
-    async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
-        if not team:
-            await message.answer("❌ Tumhara koi team nahi hai!")
-            return
-
-        await state.set_state(DeleteTeamStates.waiting_confirm)
-        await state.update_data(team_id=team.id, team_name=team.name)
-        await message.answer(
-            f"⚠️ <b>Team Delete Karna Chahte Ho?</b>\n\n"
-            f"Team: <b>{safe(team.name)}</b>\n"
-            f"Budget: ${team.budget:,}\n\n"
-            f"❗ Yeh permanent hai! Sab kuch delete hoga:\n"
-            f"Drivers, staff, sponsors, achievements\n\n"
-            f"Confirm karne ke liye team ka exact naam type karo:\n"
-            f"<code>{safe(team.name)}</code>\n\n"
-            f"Cancel karne ke liye /start bhejo"
-        )
-
-@router.message(DeleteTeamStates.waiting_confirm)
-async def delete_team_confirm(message: Message, state: FSMContext):
-    data = await state.get_data()
-    team_name = data.get("team_name", "")
-    team_id = data.get("team_id")
-
-    if message.text.strip() != team_name:
-        await message.answer(
-            f"❌ Naam match nahi hua!\n\n"
-            f"Exactly yeh type karo: <code>{safe(team_name)}</code>\n"
-            f"Ya cancel ke liye /start"
-        )
-        return
-
-    async with get_session() as db:
-        from sqlalchemy import delete as sql_delete
-        from src.models.models import (
-            TeamDriver, TeamStaff, TeamSponsor,
-            RaceResult, TeamAchievement, RaceStrategy,
-            ConstructorStanding, DriverStanding, ResearchProject
-        )
-
-        # Sab related data delete karo
-        await db.execute(sql_delete(TeamDriver).where(TeamDriver.team_id == team_id))
-        await db.execute(sql_delete(TeamStaff).where(TeamStaff.team_id == team_id))
-        await db.execute(sql_delete(TeamSponsor).where(TeamSponsor.team_id == team_id))
-        await db.execute(sql_delete(RaceResult).where(RaceResult.team_id == team_id))
-        await db.execute(sql_delete(RaceStrategy).where(RaceStrategy.team_id == team_id))
-        await db.execute(sql_delete(TeamAchievement).where(TeamAchievement.team_id == team_id))
-        await db.execute(sql_delete(ResearchProject).where(ResearchProject.team_id == team_id))
-        await db.execute(sql_delete(ConstructorStanding).where(ConstructorStanding.team_id == team_id))
-
-        # Team delete
-        from sqlalchemy import select as sql_select
-        from src.models.models import Team
-        result = await db.execute(sql_select(Team).where(Team.id == team_id))
-        team = result.scalar_one_or_none()
-        if team:
-            # Free agents wapas karo
-            for td_result in await db.execute(
-                sql_select(TeamDriver).where(TeamDriver.team_id == team_id)
-            ):
-                pass  # already deleted above
-            await db.delete(team)
-
-    await state.clear()
-    await message.answer(
-        f"✅ <b>Team Delete Ho Gayi!</b>\n\n"
-        f"<b>{safe(team_name)}</b> permanently delete ho gayi.\n\n"
-        f"Naya team banana chahte ho? /register karo 🏎️"
-    )
-
-
-# ─────────────────────────────────────────────
-# SPONSORS
-# ─────────────────────────────────────────────
-
-import random
-
-SPONSOR_BRANDS = {
-    "small": [
-        {"name": "PitStop Café ☕", "reward": 1_200_000, "contract": 5, "req": "Top 20 finish", "target_pos": 20},
-        {"name": "TurboFuel Energy ⛽", "reward": 1_500_000, "contract": 5, "req": "Top 18 finish", "target_pos": 18},
-        {"name": "SpeedParts Co. 🔩", "reward": 1_800_000, "contract": 6, "req": "Top 16 finish", "target_pos": 16},
-        {"name": "RaceGear Pro 🧢", "reward": 2_000_000, "contract": 5, "req": "Top 15 finish", "target_pos": 15},
-        {"name": "FastLap Betting 🎰", "reward": 2_200_000, "contract": 4, "req": "Top 14 finish", "target_pos": 14},
-    ],
-    "medium": [
-        {"name": "Kronos Watches ⌚", "reward": 5_000_000, "contract": 5, "req": "Top 10 finish", "target_pos": 10},
-        {"name": "TechVision Electronics 📱", "reward": 4_500_000, "contract": 6, "req": "Top 12 finish", "target_pos": 12},
-        {"name": "AeroDyne Aviation ✈️", "reward": 6_000_000, "contract": 5, "req": "Score 5+ points", "target_pos": 6},
-        {"name": "Nexus Motors 🚗", "reward": 5_500_000, "contract": 5, "req": "Top 8 finish", "target_pos": 8},
-        {"name": "GlobalBank Finance 🏦", "reward": 7_000_000, "contract": 4, "req": "Score 8+ points", "target_pos": 5},
-    ],
-    "premium": [
-        {"name": "Apex Luxury Cars 🏎️", "reward": 15_000_000, "contract": 5, "req": "Podium finish (Top 3)", "target_pos": 3},
-        {"name": "QuantumTech Corp 💻", "reward": 12_000_000, "contract": 6, "req": "Top 5 finish", "target_pos": 5},
-        {"name": "Diamond Energy 💎", "reward": 18_000_000, "contract": 4, "req": "Score 25+ points", "target_pos": 1},
-        {"name": "StarVault Finance 🌟", "reward": 20_000_000, "contract": 5, "req": "Race WIN", "target_pos": 1},
-    ],
-    "title": [
-        {"name": "Pinnacle Global 👑", "reward": 50_000_000, "contract": 10, "req": "Championship contender (75+ rep)", "target_pos": 1},
-        {"name": "Sovereign Holdings 🏰", "reward": 40_000_000, "contract": 8, "req": "Multiple race wins (70+ rep)", "target_pos": 1},
-    ],
+ROLE_EMOJI = {
+    "team_principal":       "👔",
+    "technical_director":   "🔬",
+    "chief_designer":       "📐",
+    "head_of_aerodynamics": "💨",
+    "aerodynamicist":       "🌬️",
+    "chief_race_engineer":  "📻",
+    "race_engineer":        "📡",
+    "pit_crew_chief":       "🔧",
+    "sporting_director":    "📋",
+    "power_unit_director":  "⚡",
+    "head_of_strategy":     "📊",
+    "performance_director": "📈",
 }
 
-TIER_EMOJI = {"small": "🟢", "medium": "🔵", "premium": "🟣", "title": "🟡"}
-TIER_REP   = {"small": 0, "medium": 20, "premium": 50, "title": 70}
-TIER_NAME  = {"small": "Small", "medium": "Medium", "premium": "Premium", "title": "Title"}
+ROLE_LABEL = {
+    "team_principal":       "Team Principal",
+    "technical_director":   "Technical Director",
+    "chief_designer":       "Chief Designer",
+    "head_of_aerodynamics": "Head of Aerodynamics",
+    "aerodynamicist":       "Aerodynamicist",
+    "chief_race_engineer":  "Chief Race Engineer",
+    "race_engineer":        "Race Engineer",
+    "pit_crew_chief":       "Pit Crew Chief",
+    "sporting_director":    "Sporting Director",
+    "power_unit_director":  "Power Unit Director",
+    "head_of_strategy":     "Head of Strategy",
+    "performance_director": "Performance Director",
+}
+
+ROLE_WHAT_THEY_DO = {
+    "team_principal":       "Overall leadership & budget management",
+    "technical_director":   "Full car performance & development oversight",
+    "chief_designer":       "Car design & component architecture",
+    "head_of_aerodynamics": "Aero concept & wind tunnel programme",
+    "aerodynamicist":       "CFD analysis & aero fine-tuning",
+    "chief_race_engineer":  "Race strategy & driver coaching",
+    "race_engineer":        "Car setup & in-race adjustments",
+    "pit_crew_chief":       "Pit stop speed & crew execution",
+    "sporting_director":    "Regulations, protests & logistics",
+    "power_unit_director":  "Engine modes, ERS & thermal management",
+    "head_of_strategy":     "Pre-race modelling & live strategy calls",
+    "performance_director": "Overall performance benchmarking",
+}
+
+def _role_str(role) -> str:
+    r = role.value if hasattr(role, "value") else str(role)
+    return r
+
+def _role_emoji(role) -> str:
+    return ROLE_EMOJI.get(_role_str(role), "👤")
+
+def _role_label(role) -> str:
+    return ROLE_LABEL.get(_role_str(role), _role_str(role).replace("_", " ").title())
 
 
-def get_available_tiers(reputation: int) -> list[str]:
-    return [t for t, min_rep in TIER_REP.items() if reputation >= min_rep]
+# ─────────────────────────────────────────────
+# /staffmarket — Browse available staff
+# ─────────────────────────────────────────────
 
-
-@router.message(F.text == "💰 Sponsors")
-async def cmd_sponsors(message: Message):
+@router.message(Command("staffmarket"))
+@router.message(F.text == "👥 Staff Market")
+async def cmd_staffmarket(message: Message):
     async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
-        if not team:
-            await message.answer("❌ Pehle /register karke team banao!")
-            return
-
-        from sqlalchemy import select
-        from src.models.models import TeamSponsor, Sponsor
-
-        # Active sponsors
-        active_res = await db.execute(
-            select(TeamSponsor, Sponsor)
-            .join(Sponsor, TeamSponsor.sponsor_id == Sponsor.id)
-            .where(TeamSponsor.team_id == team.id, TeamSponsor.is_active == True)
+        result = await db.execute(
+            select(Staff).where(Staff.is_available == True).order_by(Staff.role, Staff.skill.desc())
         )
-        active = active_res.all()
+        all_staff = result.scalars().all()
 
-        rep = team.reputation or 0
-        available_tiers = get_available_tiers(rep)
+    if not all_staff:
+        await message.answer("❌ No staff available in the market right now.")
+        return
 
-        # Build active sponsors text
-        active_text = ""
-        if active:
-            active_text = "📋 <b>Active Sponsors:</b>\n"
-            for ts, sp in active:
-                progress = f"{ts.races_completed}/{ts.contract_races}"
-                earned = f"${ts.total_earned:,.0f}"
-                active_text += (
-                    f"  • <b>{sp.name}</b> [{sp.tier.upper()}]\n"
-                    f"    💵 ${sp.reward:,.0f}/race | Progress: {progress} | Earned: {earned}\n"
-                )
-        else:
-            active_text = "📋 <b>Active Sponsors:</b> None yet\n"
+    # Group by role
+    by_role = {}
+    for s in all_staff:
+        r = _role_str(s.role)
+        by_role.setdefault(r, []).append(s)
 
-        # Build offers based on reputation
-        offers_text = f"\n🏆 <b>Your Reputation:</b> {rep}/100\n\n💼 <b>Available Sponsor Offers:</b>\n\n"
+    lines = ["👥 <b>STAFF MARKET</b>\n",
+             "Use /hirestaff &lt;id&gt; to hire someone.\n"]
 
-        for tier in ["small", "medium", "premium", "title"]:
-            min_rep = TIER_REP[tier]
-            emoji = TIER_EMOJI[tier]
-            if rep >= min_rep:
-                # Pick 2 random sponsors from this tier to show as "offers"
-                import random
-                tier_brands = SPONSOR_BRANDS[tier]
-                shown = random.sample(tier_brands, min(2, len(tier_brands)))
-                offers_text += f"{emoji} <b>{TIER_NAME[tier]} Sponsors</b>\n"
-                for b in shown:
-                    offers_text += (
-                        f"  🏷️ <b>{b['name']}</b>\n"
-                        f"  💰 ${b['reward']:,.0f}/race | 📜 {b['contract']} races\n"
-                        f"  🎯 Requirement: {b['req']}\n"
-                        f"  👉 /signsponsor {tier} to sign\n\n"
-                    )
-            else:
-                locked_at = min_rep
-                offers_text += f"{emoji} <b>{TIER_NAME[tier]} Sponsors</b> — 🔒 Unlock at {locked_at} rep\n\n"
+    for role_key, members in by_role.items():
+        emoji = ROLE_EMOJI.get(role_key, "👤")
+        label = ROLE_LABEL.get(role_key, role_key.replace("_"," ").title())
+        does = ROLE_WHAT_THEY_DO.get(role_key, "")
+        lines.append(f"\n{emoji} <b>{label}</b>")
+        lines.append(f"<i>{does}</i>")
+        for s in members:
+            real_badge = " ⭐" if getattr(s, "is_real", False) else ""
+            specialty = f" [{s.specialty}]" if getattr(s, "specialty", None) else ""
+            lines.append(
+                f"  <code>ID:{s.id}</code> {safe(s.name)}{real_badge}{specialty}\n"
+                f"  Skill: {'█' * (s.skill // 10)}{'░' * (10 - s.skill // 10)} {s.skill}/100\n"
+                f"  Salary: ${s.salary:,}/season | Bonus: +{round((s.performance_bonus-1)*100,1)}%"
+            )
 
-        await message.answer(
-            f"💰 <b>SPONSOR MANAGEMENT</b>\n"
-            f"👥 Team: <b>{team.name}</b>\n\n"
-            + active_text
-            + offers_text
-            + f"💡 Tip: Race better to increase reputation and unlock bigger sponsors!"
-        )
+    lines.append("\n⭐ = Real F1 legend")
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
-@router.message(Command("signsponsor"))
-async def cmd_signsponsor(message: Message):
-    parts = message.text.strip().split()
+# ─────────────────────────────────────────────
+# /hirestaff <id> — Hire a staff member
+# ─────────────────────────────────────────────
+
+@router.message(Command("hirestaff"))
+async def cmd_hirestaff(message: Message):
+    parts = message.text.split()
     if len(parts) < 2:
-        await message.answer(
-            "Usage: /signsponsor <tier>\n\n"
-            "Tiers: small, medium, premium, title\n"
-            "Example: /signsponsor medium"
-        )
+        await message.answer("Usage: /hirestaff &lt;staff_id&gt;\n\nSee /staffmarket for IDs.")
         return
 
-    tier = parts[1].lower()
-    if tier not in SPONSOR_BRANDS:
-        await message.answer("❌ Invalid tier! Use: small, medium, premium, title")
+    try:
+        staff_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ Invalid ID.")
         return
 
     async with get_session() as db:
-        team = await TeamService(db).get_by_owner(message.from_user.id)
+        # Get team
+        team_result = await db.execute(select(Team).where(Team.owner_id == message.from_user.id))
+        team = team_result.scalar_one_or_none()
         if not team:
-            await message.answer("❌ Pehle /register karke team banao!")
+            await message.answer("❌ You don't have a team! Use /register first.")
             return
 
-        rep = team.reputation or 0
-        min_rep = TIER_REP[tier]
+        # Get staff
+        staff_result = await db.execute(select(Staff).where(Staff.id == staff_id))
+        staff = staff_result.scalar_one_or_none()
+        if not staff:
+            await message.answer("❌ Staff member not found.")
+            return
+        if not staff.is_available:
+            await message.answer("❌ This staff member is not available.")
+            return
 
-        if rep < min_rep:
+        # Check budget
+        if team.budget < staff.salary:
             await message.answer(
-                f"❌ Reputation kam hai!\n"
-                f"<b>{TIER_NAME[tier]}</b> sponsors ke liye {min_rep} rep chahiye.\n"
-                f"Tumhari abhi: {rep} rep 📉"
+                f"❌ Not enough budget!\n"
+                f"Salary: ${staff.salary:,}\n"
+                f"Your budget: ${team.budget:,}"
             )
             return
 
-        from sqlalchemy import select
-        from src.models.models import TeamSponsor, Sponsor
-
-        # Check already has a sponsor of this tier active
-        existing = await db.execute(
-            select(TeamSponsor, Sponsor)
-            .join(Sponsor, TeamSponsor.sponsor_id == Sponsor.id)
-            .where(
-                TeamSponsor.team_id == team.id,
-                TeamSponsor.is_active == True,
-                Sponsor.tier == tier
+        # Check if already have same role
+        existing_result = await db.execute(
+            select(TeamStaff).join(Staff, TeamStaff.staff_id == Staff.id)
+            .where(and_(TeamStaff.team_id == team.id, Staff.role == staff.role))
+        )
+        existing = existing_result.scalar_one_or_none()
+        if existing:
+            await message.answer(
+                f"❌ You already have a {_role_label(staff.role)}!\n"
+                f"Use /firestaff &lt;id&gt; to release them first."
             )
-        )
-        if existing.all():
-            await message.answer(f"❌ Already ek <b>{TIER_NAME[tier]}</b> sponsor active hai! Pehle woh complete karo.")
             return
 
-        # Find matching sponsor in DB (seeded)
-        sponsor_res = await db.execute(
-            select(Sponsor).where(Sponsor.tier == tier, Sponsor.min_reputation <= rep)
-        )
-        sponsors_avail = sponsor_res.scalars().all()
+        # Hire
+        team.budget -= staff.salary
+        staff.is_available = False
+        contract = TeamStaff(team_id=team.id, staff_id=staff.id, salary=staff.salary)
+        db.add(contract)
+        await db.commit()
 
-        if not sponsors_avail:
-            await message.answer("❌ Is tier ka koi sponsor available nahi abhi.")
+    real_badge = " ⭐ (F1 Legend)" if getattr(staff, "is_real", False) else ""
+    await message.answer(
+        f"✅ <b>{safe(staff.name)}</b>{real_badge} hired!\n\n"
+        f"{_role_emoji(staff.role)} Role: {_role_label(staff.role)}\n"
+        f"⚙️ Skill: {staff.skill}/100\n"
+        f"📈 Performance Bonus: +{round((staff.performance_bonus-1)*100,1)}%\n"
+        f"💰 Annual Salary: ${staff.salary:,}\n\n"
+        f"<i>{ROLE_WHAT_THEY_DO.get(_role_str(staff.role), '')}</i>",
+        parse_mode="HTML"
+    )
+
+
+# ─────────────────────────────────────────────
+# /mystaff — View your hired staff
+# ─────────────────────────────────────────────
+
+@router.message(Command("mystaff"))
+@router.message(F.text == "👥 My Staff")
+async def cmd_mystaff(message: Message):
+    async with get_session() as db:
+        team_result = await db.execute(select(Team).where(Team.owner_id == message.from_user.id))
+        team = team_result.scalar_one_or_none()
+        if not team:
+            await message.answer("❌ You don't have a team! Use /register first.")
             return
 
-        chosen = random.choice(sponsors_avail)
-        brand_data = next((b for b in SPONSOR_BRANDS[tier] if b["name"].split(" ")[0] in chosen.name or chosen.name.split(" ")[0] in b["name"]), SPONSOR_BRANDS[tier][0])
-        contract_races = brand_data["contract"]
-
-        ts = TeamSponsor(
-            team_id=team.id,
-            sponsor_id=chosen.id,
-            contract_races=contract_races,
-            races_completed=0,
-            total_earned=0,
-            is_active=True,
+        staff_result = await db.execute(
+            select(TeamStaff, Staff)
+            .join(Staff, TeamStaff.staff_id == Staff.id)
+            .where(TeamStaff.team_id == team.id)
         )
-        db.add(ts)
-        await db.flush()
+        staff_list = staff_result.all()
 
+    if not staff_list:
         await message.answer(
-            f"✅ <b>Sponsor Signed!</b>\n\n"
-            f"🏷️ <b>{chosen.name}</b> [{chosen.tier.upper()}]\n"
-            f"💰 ${chosen.reward:,.0f} per race\n"
-            f"📜 Contract: {contract_races} races\n"
-            f"🎯 Target: {brand_data['req']}\n\n"
-            f"Race karo aur paisa kamao! 🏎️"
+            "👥 <b>Your Staff</b>\n\n"
+            "⚠️ No staff hired yet!\n\n"
+            "Use /staffmarket to browse available staff.\n"
+            "Staff provide performance bonuses and post-race insights.",
+            parse_mode="HTML"
         )
+        return
+
+    total_salary = sum(ts.salary for ts, s in staff_list)
+    total_bonus = 1.0
+    for ts, s in staff_list:
+        total_bonus *= s.performance_bonus
+    total_bonus = min(1.25, total_bonus)
+
+    lines = [f"👥 <b>YOUR STAFF — {safe(team.name)}</b>\n"]
+
+    for ts, s in staff_list:
+        real_badge = " ⭐" if getattr(s, "is_real", False) else ""
+        specialty = f" [{s.specialty}]" if getattr(s, "specialty", None) else ""
+        lines.append(
+            f"{_role_emoji(s.role)} <b>{safe(s.name)}</b>{real_badge}\n"
+            f"  {_role_label(s.role)}{specialty}\n"
+            f"  Skill: {s.skill}/100 | Bonus: +{round((s.performance_bonus-1)*100,1)}%\n"
+            f"  Salary: ${ts.salary:,} | ID: {ts.id}\n"
+            f"  <i>/firestaff {ts.id} to release</i>"
+        )
+
+    lines.append(f"\n💰 Total Staff Wages: ${total_salary:,}/season")
+    lines.append(f"📈 Combined Performance Bonus: +{round((total_bonus-1)*100,1)}%")
+    lines.append(f"\n💡 Post-race insights unlocked for {len(staff_list)} role(s)")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+# ─────────────────────────────────────────────
+# /firestaff <contract_id> — Release a staff member
+# ─────────────────────────────────────────────
+
+@router.message(Command("firestaff"))
+async def cmd_firestaff(message: Message):
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Usage: /firestaff &lt;contract_id&gt;\n\nSee /mystaff for IDs.")
+        return
+
+    try:
+        contract_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ Invalid ID.")
+        return
+
+    async with get_session() as db:
+        team_result = await db.execute(select(Team).where(Team.owner_id == message.from_user.id))
+        team = team_result.scalar_one_or_none()
+        if not team:
+            await message.answer("❌ You don't have a team.")
+            return
+
+        contract_result = await db.execute(
+            select(TeamStaff, Staff)
+            .join(Staff, TeamStaff.staff_id == Staff.id)
+            .where(and_(TeamStaff.id == contract_id, TeamStaff.team_id == team.id))
+        )
+        row = contract_result.one_or_none()
+        if not row:
+            await message.answer("❌ Contract not found or doesn't belong to your team.")
+            return
+
+        ts, s = row
+        s.is_available = True
+        await db.delete(ts)
+        await db.commit()
+
+    await message.answer(
+        f"🚪 <b>{safe(s.name)}</b> released.\n"
+        f"They are now available in the market again.",
+        parse_mode="HTML"
+    )

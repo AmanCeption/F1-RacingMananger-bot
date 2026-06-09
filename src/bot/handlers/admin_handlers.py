@@ -476,6 +476,30 @@ async def cmd_forcerace(message: Message):
                 + "\n\n✅ Points & standings updated!"
             )
 
+            # ── STAFF INSIGHTS — send to each team owner privately ──
+            await asyncio.sleep(4)
+            staff_insights = result.get("staff_insights", {})
+            if staff_insights:
+                # Get all team owners in this league
+                from sqlalchemy import select as sa_select
+                from src.models.models import Team as TeamModel
+                async with get_session() as db2:
+                    teams_res = await db2.execute(
+                        sa_select(TeamModel).where(TeamModel.league_id == league_id)
+                    )
+                    all_teams = teams_res.scalars().all()
+                for t in all_teams:
+                    insight_text = staff_insights.get(t.id)
+                    if insight_text and t.owner_id:
+                        try:
+                            await message.bot.send_message(
+                                t.owner_id,
+                                insight_text,
+                                parse_mode="HTML"
+                            )
+                        except Exception:
+                            pass  # user may have blocked bot
+
     except Exception as e:
         logger.error(f"forcerace error: {e}", exc_info=True)
         await message.answer(f"❌ Error: <code>{str(e)}</code>")

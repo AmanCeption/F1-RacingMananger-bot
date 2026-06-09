@@ -157,12 +157,12 @@ class Team(Base):
 
     owner: Mapped["User"] = relationship("User", back_populates="teams")
     league: Mapped[Optional["League"]] = relationship("League", back_populates="teams")
-    drivers: Mapped[List["TeamDriver"]] = relationship("TeamDriver", back_populates="team")
-    staff: Mapped[List["TeamStaff"]] = relationship("TeamStaff", back_populates="team")
-    sponsors: Mapped[List["TeamSponsor"]] = relationship("TeamSponsor", back_populates="team")
-    results: Mapped[List["RaceResult"]] = relationship("RaceResult", back_populates="team")
-    achievements: Mapped[List["TeamAchievement"]] = relationship("TeamAchievement", back_populates="team")
-    research_projects: Mapped[List["ResearchProject"]] = relationship("ResearchProject", back_populates="team")
+    drivers: Mapped[List["TeamDriver"]] = relationship("TeamDriver", back_populates="team", cascade="all, delete-orphan")
+    staff: Mapped[List["TeamStaff"]] = relationship("TeamStaff", back_populates="team", cascade="all, delete-orphan")
+    sponsors: Mapped[List["TeamSponsor"]] = relationship("TeamSponsor", back_populates="team", cascade="all, delete-orphan")
+    results: Mapped[List["RaceResult"]] = relationship("RaceResult", back_populates="team", cascade="all, delete-orphan")
+    achievements: Mapped[List["TeamAchievement"]] = relationship("TeamAchievement", back_populates="team", cascade="all, delete-orphan")
+    research_projects: Mapped[List["ResearchProject"]] = relationship("ResearchProject", back_populates="team", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("owner_id", "league_id", name="uq_team_owner_league"),

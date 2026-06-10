@@ -35,6 +35,36 @@ async def run_migrations():
             await conn.execute(text(
                 "ALTER TABLE staff ADD COLUMN IF NOT EXISTS specialty VARCHAR(64)"
             ))
+
+            # Add unique constraints on standings tables (safe — IF NOT EXISTS)
+            for constraint_sql in [
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'uq_driver_standing'
+                    ) THEN
+                        ALTER TABLE driver_standings
+                            ADD CONSTRAINT uq_driver_standing
+                            UNIQUE (league_id, season, driver_id);
+                    END IF;
+                END $$;
+                """,
+                """
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'uq_constructor_standing'
+                    ) THEN
+                        ALTER TABLE constructor_standings
+                            ADD CONSTRAINT uq_constructor_standing
+                            UNIQUE (league_id, season, team_id);
+                    END IF;
+                END $$;
+                """,
+            ]:
+                try:
+                    await conn.execute(text(constraint_sql))
+                except Exception as e:
+                    logger.warning(f"Standings constraint migration warning: {e}")
             # Fix cascade deletes for team-related tables
             cascade_tables = [
                 "race_results", "race_strategies", "qualifying_results",

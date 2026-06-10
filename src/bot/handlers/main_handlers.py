@@ -1844,7 +1844,7 @@ async def cb_research_tree(callback: CallbackQuery):
         text += "No research nodes available."
     else:
         for node in nodes:
-            done = "✅" if node["is_complete"] else "🔒"
+            done = "✅" if node.get("is_complete") or node.get("done") else "🔒"
             text += (
                 f"{done} <b>{safe(node['name'])}</b>\n"
                 f"  Cost: {node['rp_cost']} RP + ${node['money_cost']:,}\n"

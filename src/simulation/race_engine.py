@@ -230,7 +230,7 @@ def simulate_overtake(attacker: CarEntry, defender: CarEntry, weather: Weather) 
     return total_attack > total_defend
 
 
-async def simulate_race(
+def simulate_race(
     entries: list[CarEntry],
     circuit_name: str,
     total_laps: int,
@@ -475,7 +475,7 @@ def _calc_quali_lap(car: CarEntry, weather: Weather, tyre: str, attempts: int = 
     return best
 
 
-async def simulate_qualifying(
+def simulate_qualifying(
     entries: list[CarEntry],
     weather: Weather,
     circuit_name: str = "Circuit",

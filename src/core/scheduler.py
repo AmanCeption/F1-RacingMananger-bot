@@ -11,7 +11,7 @@ from src.core.database.session import get_session
 from src.core.config import settings
 from src.models.models import League, Team, LeagueStatus
 from src.services.game_services import RaceService
-from src.services.notification_service import send_race_reminders, send_daily_reminders
+from src.services.notification_service import send_race_reminders, send_daily_reminders, send_race_results
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +30,8 @@ async def auto_run_races(bot: Bot):
                 svc = RaceService(db)
                 race_result = await svc.run_race(league.id)
                 if race_result:
-                    events = race_result["events"][:15]
-                    msg = "\n".join(events)
-                    logger.info(f"Race completed for league {league.id}")
+                    logger.info(f"Race completed for league {league.id}: {race_result['race_name']}")
+                    await send_race_results(bot, league.id, race_result)
             except Exception as e:
                 logger.error(f"Race failed for league {league.id}: {e}")
 

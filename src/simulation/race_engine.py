@@ -440,35 +440,170 @@ async def simulate_race(
     }
 
 
-async def simulate_qualifying(entries: list[CarEntry], weather: Weather) -> list[CarEntry]:
-    """Simulate qualifying - returns sorted grid"""
-    quali_times = []
+def _calc_quali_lap(car: CarEntry, weather: Weather, tyre: str, attempts: int = 3) -> float:
+    """Calculate best qualifying lap time for a car on a given tyre compound."""
+    car_perf = (
+        car.engine      * 0.28 +
+        car.aerodynamics * 0.30 +
+        car.chassis      * 0.22 +
+        car.pit_crew     * 0.10 +
+        car.tyre_mgmt    * 0.10
+    )
+    # In rain, wet_weather skill matters a lot
+    if weather in (Weather.HEAVY_RAIN, Weather.LIGHT_RAIN, Weather.MIXED):
+        driver_perf = car.pace * 0.35 + car.consistency * 0.25 + car.wet_weather * 0.40
+    else:
+        driver_perf = car.pace * 0.55 + car.consistency * 0.30 + car.racecraft * 0.15
 
+    combined = (car_perf * 0.55 + driver_perf * 0.45) * car.staff_modifier
+
+    # Weather × tyre compound interaction
+    weather_tyre = WEATHER_TYRE_BONUS[weather][tyre]
+    tyre_pace    = TYRE_PACE[tyre]
+
+    # Base time: best car (100) ≈ 82 s, average (50) ≈ 89 s
+    base = 91.0 - combined * 0.09
+    base = base / (tyre_pace * weather_tyre)
+
+    # Random variance shrinks on faster compounds (driver wrings more out)
+    variance_sigma = 0.20 if tyre == "soft" else 0.30
+
+    best = float("inf")
+    for _ in range(attempts):
+        lap = base + random.gauss(0, variance_sigma)
+        best = min(best, lap)
+    return best
+
+
+async def simulate_qualifying(
+    entries: list[CarEntry],
+    weather: Weather,
+    circuit_name: str = "Circuit",
+) -> dict:
+    """
+    Full F1-style Q1 / Q2 / Q3 qualifying simulation.
+
+    Returns:
+        {
+          "grid":    [CarEntry, ...],   # sorted P1→last
+          "q_times": {driver_id: {"q1": float, "q2": float|None, "q3": float|None}},
+          "events":  [str, ...],        # narrative lines
+          "weather": Weather,
+          "pole_time": float,
+          "pole_sitter": str,
+        }
+    """
+    n = len(entries)
+    events = []
+    q_times: dict[int, dict] = {e.driver_id: {"q1": None, "q2": None, "q3": None} for e in entries}
+
+    events.append(f"🏎️ <b>QUALIFYING — {circuit_name}</b>")
+    events.append(f"🌤️ Conditions: {WEATHER_LABELS[weather]}")
+    events.append("")
+
+    # ── Q1: All cars, bottom 5 (or bottom 35 % for small grids) eliminated ──
+    q1_elim = max(1, n // 5)          # ~20 % eliminated
+    q2_adv  = n - q1_elim             # cars into Q2
+
+    events.append("⏱️ <b>Q1 — All cars on track</b>")
+    q1_results = []
     for car in entries:
-        # Q lap time calculation
-        car_perf = (car.engine * 0.3 + car.aerodynamics * 0.3 + car.chassis * 0.2 + car.pit_crew * 0.2)
-        driver_perf = car.pace * 0.6 + car.consistency * 0.4
+        tyre = "soft" if weather in (Weather.SUNNY, Weather.CLOUDY) else (
+               "intermediate" if weather == Weather.LIGHT_RAIN else
+               "wet" if weather == Weather.HEAVY_RAIN else "medium")
+        t = _calc_quali_lap(car, weather, tyre)
+        q_times[car.driver_id]["q1"] = round(t, 3)
+        q1_results.append((car, t))
 
-        # Best lap (3 attempts, take fastest)
-        best_time = float("inf")
-        for _ in range(3):
-            weather_factor = WEATHER_TYRE_BONUS[weather]["soft"]
-            base = 95.0 - (car_perf * 0.5 + driver_perf * 0.5) * 0.15
-            base *= weather_factor
-            lap = base + random.gauss(0, 0.4)
-            best_time = min(best_time, lap)
+    q1_results.sort(key=lambda x: x[1])
+    for pos, (car, t) in enumerate(q1_results):
+        m, s = divmod(t, 60)
+        events.append(f"  P{pos+1:>2}  {car.driver_name:<22} {int(m)}:{s:06.3f}")
 
-        quali_times.append((car, best_time))
+    q1_out = [car for car, _ in q1_results[q2_adv:]]
+    if q1_out:
+        events.append(f"\n❌ <b>Out in Q1:</b> " + ", ".join(c.driver_name for c in q1_out))
 
-    # Sort by time
-    quali_times.sort(key=lambda x: x[1])
+    # ── Q2: Top cars from Q1, bottom ~30 % eliminated ──
+    q2_cars = [car for car, _ in q1_results[:q2_adv]]
+    q2_elim = max(1, q2_adv // 3)
+    q3_adv  = q2_adv - q2_elim
+    q3_adv  = min(q3_adv, 10)          # Q3 max 10 cars
 
-    sorted_cars = []
-    for pos, (car, time) in enumerate(quali_times):
-        car.position = pos + 1
-        sorted_cars.append(car)
+    events.append("\n⏱️ <b>Q2 — Top cars fight for Q3</b>")
+    q2_results = []
+    for car in q2_cars:
+        tyre = "soft" if weather in (Weather.SUNNY, Weather.CLOUDY) else (
+               "intermediate" if weather == Weather.LIGHT_RAIN else
+               "wet" if weather == Weather.HEAVY_RAIN else "medium")
+        # Q2 lap slightly faster — push harder
+        t = _calc_quali_lap(car, weather, tyre, attempts=3) * random.uniform(0.994, 0.999)
+        q_times[car.driver_id]["q2"] = round(t, 3)
+        q2_results.append((car, t))
 
-    return sorted_cars
+    q2_results.sort(key=lambda x: x[1])
+    for pos, (car, t) in enumerate(q2_results):
+        m, s = divmod(t, 60)
+        events.append(f"  P{pos+1:>2}  {car.driver_name:<22} {int(m)}:{s:06.3f}")
+
+    q2_out = [car for car, _ in q2_results[q3_adv:]]
+    if q2_out:
+        events.append(f"\n❌ <b>Out in Q2:</b> " + ", ".join(c.driver_name for c in q2_out))
+
+    # ── Q3: Top 10 fight for pole ──
+    q3_cars = [car for car, _ in q2_results[:q3_adv]]
+
+    events.append("\n⏱️ <b>Q3 — POLE POSITION SHOOTOUT</b>")
+    q3_results = []
+    for car in q3_cars:
+        tyre = "soft" if weather in (Weather.SUNNY, Weather.CLOUDY) else (
+               "intermediate" if weather == Weather.LIGHT_RAIN else "wet")
+        # Q3: maximum push — 2 flying laps, take best
+        t = _calc_quali_lap(car, weather, tyre, attempts=2) * random.uniform(0.990, 0.997)
+        q_times[car.driver_id]["q3"] = round(t, 3)
+        q3_results.append((car, t))
+
+    q3_results.sort(key=lambda x: x[1])
+    pole_time = q3_results[0][1] if q3_results else (q2_results[0][1] if q2_results else 90.0)
+    pole_sitter = q3_results[0][0] if q3_results else q2_results[0][0]
+
+    for pos, (car, t) in enumerate(q3_results):
+        m, s = divmod(t, 60)
+        gap = f"+{t - pole_time:.3f}s" if pos > 0 else "POLE"
+        events.append(f"  P{pos+1:>2}  {car.driver_name:<22} {int(m)}:{s:06.3f}  {gap}")
+
+    # ── Build final grid: Q3 order → Q2 order → Q1 order ──
+    grid_order = (
+        [car for car, _ in q3_results] +
+        [car for car, _ in q2_results[q3_adv:]] +
+        [car for car, _ in q1_results[q2_adv:]]
+    )
+
+    for i, car in enumerate(grid_order):
+        car.position = i + 1
+
+    pm, ps = divmod(pole_time, 60)
+    events.append(f"\n🏆 <b>POLE POSITION: {pole_sitter.driver_name}</b>  {int(pm)}:{ps:06.3f}")
+    events.append(f"   ({pole_sitter.team_name})")
+
+    # Team upgrade hint based on quali gap
+    if len(q3_results) >= 2:
+        gap_to_pole = q3_results[-1][1] - pole_time
+        if gap_to_pole > 1.5:
+            events.append(f"\n💡 Tip: Large gap to pole — focus on Engine & Aero upgrades")
+        elif gap_to_pole > 0.8:
+            events.append(f"\n💡 Tip: Moderate gap — driver skill and chassis tuning can help")
+        else:
+            events.append(f"\n💡 Tip: You're competitive — tyre strategy will be key in the race")
+
+    return {
+        "grid": grid_order,
+        "q_times": q_times,
+        "events": events,
+        "weather": weather,
+        "pole_time": pole_time,
+        "pole_sitter": pole_sitter.driver_name,
+    }
 
 
 def generate_practice_report(car: CarEntry, weather: Weather) -> str:

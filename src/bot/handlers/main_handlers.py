@@ -1800,12 +1800,14 @@ async def cmd_research(message: Message):
         if not team:
             await message.answer("❌ Register first!")
             return
+        team_rp = team.research_points
+        team_id = team.id
 
     await message.answer(
         f"🔬 <b>Research & Development</b>\n\n"
-        f"Research Points: <b>{team.research_points}</b>\n\n"
+        f"Research Points: <b>{team_rp}</b>\n\n"
         f"Choose a research tree to develop:",
-        reply_markup=research_kb(team.id)
+        reply_markup=research_kb(team_id)
     )
 
 
@@ -1821,6 +1823,8 @@ async def cb_research_tree(callback: CallbackQuery):
             return
 
         status = await ResearchService(db).get_tree_status(team.id, tree)
+        team_rp = team.research_points
+        team_id = team.id
 
     tree_labels = {
         "power_unit": "⚡ Power Unit",
@@ -1832,7 +1836,7 @@ async def cb_research_tree(callback: CallbackQuery):
 
     text = (
         f"🔬 <b>{tree_labels.get(tree, tree)}</b>\n\n"
-        f"Research Points: <b>{team.research_points}</b>\n\n"
+        f"Research Points: <b>{team_rp}</b>\n\n"
     )
 
     nodes = status.get("nodes", [])
@@ -1848,15 +1852,15 @@ async def cb_research_tree(callback: CallbackQuery):
                 f"  Use: /research {tree} {node['key']}\n\n"
             )
 
-    await callback.message.edit_text(text, reply_markup=research_kb(team.id))
+    await callback.message.edit_text(text, reply_markup=research_kb(team_id))
     await callback.answer()
 
 
-@router.message(Command("research"))
+@router.message(Command("research", magic=F.args != None))
 async def cmd_research_buy(message: Message):
     parts = message.text.split()
     if len(parts) < 3:
-        return  # handled by the F.text handler above
+        return  # handled by the no-args handler above
 
     tree, node_key = parts[1], parts[2]
     async with get_session() as db:

@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>F1Game Admin — @AmanCeption</title>
+<style>
+  :root {
+    --red: #E10600;
+    --red-dim: #8a0400;
+    --bg: #0d0d0d;
+    --bg2: #161616;
+    --bg3: #1e1e1e;
+    --border: #2a2a2a;
+    --text: #f0f0f0;
+    --muted: #888;
+    --accent: #E10600;
+    --green: #1ed760;
+    --amber: #f59e0b;
+    --blue: #3b82f6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, sans-serif; font-size: 14px; }
+  
+  /* Login */
+  #login-screen {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, #1a0000 0%, #0d0d0d 70%);
+  }
+  .login-box {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 40px; width: 360px; text-align: center;
+  }
+  .login-box .logo { font-size: 36px; margin-bottom: 8px; }
+  .login-box h1 { font-size: 22px; font-weight: 700; color: var(--red); letter-spacing: 2px; }
+  .login-box p { color: var(--muted); font-size: 12px; margin: 6px 0 28px; }
+  .login-box input {
+    width: 100%; padding: 12px 16px; background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 14px; outline: none; margin-bottom: 12px;
+    transition: border-color 0.2s;
+  }
+  .login-box input:focus { border-color: var(--red); }
+  .login-box button {
+    width: 100%; padding: 12px; background: var(--red); border: none; border-radius: 8px;
+    color: white; font-size: 14px; font-weight: 700; cursor: pointer; letter-spacing: 1px;
+  }
+  .login-box button:hover { background: #c00500; }
+  #login-error { color: var(--red); font-size: 12px; margin-top: 10px; display: none; }
+
+  /* Layout */
+  #app { display: none; }
+  .layout { display: flex; min-height: 100vh; }
+  
+  /* Sidebar */
+  .sidebar {
+    width: 220px; background: var(--bg2); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; position: fixed; height: 100vh; overflow-y: auto;
+  }
+  .sidebar-logo { padding: 20px 16px 12px; border-bottom: 1px solid var(--border); }
+  .sidebar-logo .brand { color: var(--red); font-weight: 800; font-size: 16px; letter-spacing: 1px; }
+  .sidebar-logo .sub { color: var(--muted); font-size: 11px; }
+  .nav-section { padding: 16px 8px 8px; }
+  .nav-label { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 1.5px; padding: 0 8px 6px; text-transform: uppercase; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px;
+    cursor: pointer; color: var(--muted); font-size: 13px; transition: all 0.15s;
+    border: none; background: none; width: 100%; text-align: left;
+  }
+  .nav-item:hover { background: var(--bg3); color: var(--text); }
+  .nav-item.active { background: rgba(225,6,0,0.15); color: var(--red); }
+  .nav-item .icon { font-size: 16px; width: 18px; text-align: center; }
+  .badge { background: var(--red); color: white; font-size: 10px; padding: 2px 6px; border-radius: 10px; margin-left: auto; }
+  .sidebar-footer { margin-top: auto; padding: 16px; border-top: 1px solid var(--border); }
+  .sidebar-footer button { background: none; border: 1px solid var(--border); color: var(--muted); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; width: 100%; }
+
+  /* Main content */
+  .main { margin-left: 220px; flex: 1; }
+  .topbar {
+    background: var(--bg2); border-bottom: 1px solid var(--border);
+    padding: 0 24px; height: 56px; display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .topbar h2 { font-size: 16px; font-weight: 600; }
+  .topbar .actions { display: flex; gap: 8px; align-items: center; }
+  .content { padding: 24px; }
+
+  /* Stats grid */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .stat-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; position: relative; overflow: hidden;
+  }
+  .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--accent); }
+  .stat-card.green::before { background: var(--green); }
+  .stat-card.blue::before { background: var(--blue); }
+  .stat-card.amber::before { background: var(--amber); }
+  .stat-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-value { font-size: 28px; font-weight: 700; margin-top: 6px; }
+  .stat-icon { position: absolute; right: 14px; top: 14px; font-size: 20px; opacity: 0.3; }
+
+  /* Table */
+  .table-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .table-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .table-header h3 { font-size: 14px; font-weight: 600; }
+  .search-box {
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 12px; color: var(--text); font-size: 13px; outline: none; width: 220px;
+  }
+  .search-box:focus { border-color: var(--red); }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: var(--bg3); padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+  td { padding: 11px 16px; border-top: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .table-footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .page-info { color: var(--muted); font-size: 12px; }
+
+  /* Badges */
+  .badge-status { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-active { background: rgba(30,215,96,0.15); color: var(--green); }
+  .badge-banned { background: rgba(225,6,0,0.15); color: var(--red); }
+  .badge-waiting { background: rgba(245,158,11,0.15); color: var(--amber); }
+  .badge-finished { background: rgba(136,136,136,0.15); color: var(--muted); }
+  .badge-normal { background: rgba(59,130,246,0.15); color: var(--blue); }
+
+  /* Buttons */
+  .btn { padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.15s; }
+  .btn-danger { background: rgba(225,6,0,0.2); color: var(--red); border: 1px solid rgba(225,6,0,0.3); }
+  .btn-danger:hover { background: rgba(225,6,0,0.35); }
+  .btn-success { background: rgba(30,215,96,0.15); color: var(--green); border: 1px solid rgba(30,215,96,0.3); }
+  .btn-success:hover { background: rgba(30,215,96,0.3); }
+  .btn-info { background: rgba(59,130,246,0.15); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); }
+  .btn-info:hover { background: rgba(59,130,246,0.3); }
+  .btn-primary { background: var(--red); color: white; border: none; }
+  .btn-primary:hover { background: #c00500; }
+  .btn-sm { padding: 4px 10px; font-size: 11px; }
+  .btn-group { display: flex; gap: 4px; }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100;
+    display: flex; align-items: center; justify-content: center; display: none;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 28px; width: 480px; max-height: 80vh; overflow-y: auto;
+  }
+  .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 20px; }
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .form-group input, .form-group select, .form-group textarea {
+    width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+    padding: 9px 12px; color: var(--text); font-size: 13px; outline: none;
+  }
+  .form-group input:focus, .form-group select:focus { border-color: var(--red); }
+  .form-group textarea { min-height: 80px; resize: vertical; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+  .modal-close { position: absolute; top: 0; right: 0; background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; padding: 8px; }
+
+  /* SQL panel */
+  .sql-panel textarea { font-family: 'Courier New', monospace; font-size: 13px; min-height: 100px; }
+  .sql-result { background: var(--bg3); border-radius: 6px; margin-top: 12px; overflow-x: auto; }
+  .sql-result table th { background: transparent; }
+
+  /* Pagination */
+  .pagination { display: flex; gap: 4px; }
+  .page-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--muted); padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .page-btn:hover { border-color: var(--red); color: var(--text); }
+  .page-btn.active { background: var(--red); border-color: var(--red); color: white; }
+
+  /* Responsive */
+  .overflow-x { overflow-x: auto; }
+  .text-muted { color: var(--muted); }
+  .text-right { text-align: right; }
+  .flex { display: flex; }
+  .gap-8 { gap: 8px; }
+  .items-center { align-items: center; }
+
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 200;
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 20px; font-size: 13px; display: none; max-width: 300px;
+  }
+  #toast.success { border-color: var(--green); color: var(--green); }
+  #toast.error { border-color: var(--red); color: var(--red); }
+
+  /* Loader */
+  .loader { color: var(--muted); padding: 40px; text-align: center; font-size: 13px; }
+  
+  /* Car stat bars */
+  .stat-bar { background: var(--bg3); border-radius: 4px; height: 5px; flex: 1; overflow: hidden; }
+  .stat-bar-fill { height: 100%; background: var(--red); border-radius: 4px; transition: width 0.3s; }
+  .stat-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="logo">🏎️</div>
+    <h1>F1GAME ADMIN</h1>
+    <p>@AmanCeption — Owner Dashboard</p>
+    <input type="password" id="login-pass" placeholder="Enter admin password" onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()">ACCESS DASHBOARD</button>
+    <div id="login-error">❌ Wrong password</div>
+  </div>
+</div>
+
+<!-- Dashboard App -->
+<div id="app">
+  <div class="layout">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="sidebar-logo">
+        <div class="brand">🏎️ F1GAME</div>
+        <div class="sub">Admin Dashboard</div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Overview</div>
+        <button class="nav-item active" onclick="showPage('dashboard')">
+          <span class="icon">📊</span> Dashboard
+        </button>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Management</div>
+        <button class="nav-item" onclick="showPage('users')">
+          <span class="icon">👥</span> Users
+        </button>
+        <button class="nav-item" onclick="showPage('teams')">
+          <span class="icon">🏁</span> Teams
+        </button>
+        <button class="nav-item" onclick="showPage('leagues')">
+          <span class="icon">🏆</span> Leagues
+        </button>
+        <button class="nav-item" onclick="showPage('drivers')">
+          <span class="icon">🪪</span> Drivers
+        </button>
+        <button class="nav-item" onclick="showPage('races')">
+          <span class="icon">🏎️</span> Races
+        </button>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Tools</div>
+        <button class="nav-item" onclick="showPage('broadcast')">
+          <span class="icon">📢</span> Broadcast
+        </button>
+        <button class="nav-item" onclick="showPage('logs')">
+          <span class="icon">📋</span> Admin Logs
+        </button>
+        <button class="nav-item" onclick="showPage('suspicious')">
+          <span class="icon">⚠️</span> Suspicious
+        </button>
+        <button class="nav-item" onclick="showPage('sql')">
+          <span class="icon">🗄️</span> SQL Query
+        </button>
+      </div>
+      <div class="sidebar-footer">
+        <button onclick="logout()">🚪 Logout</button>
+      </div>
+    </nav>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="topbar">
+        <h2 id="page-title">Dashboard</h2>
+        <div class="actions">
+          <span class="text-muted" style="font-size:12px">🟢 Connected</span>
+        </div>
+      </div>
+      <div class="content" id="page-content">
+        <div class="loader">Loading...</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Modals -->
+<div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = '';
+let token = localStorage.getItem('f1_admin_token') || '';
+let currentPage = 'dashboard';
+let pages = {};
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+async function doLogin() {
+  const pass = document.getElementById('login-pass').value;
+  const err = document.getElementById('login-error');
+  try {
+    const res = await fetch(API + '/api/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({password: pass})
+    });
+    if (!res.ok) { err.style.display = 'block'; return; }
+    const data = await res.json();
+    token = data.token;
+    localStorage.setItem('f1_admin_token', token);
+    err.style.display = 'none';
+    startApp();
+  } catch(e) { err.style.display = 'block'; }
+}
+
+function logout() {
+  token = '';
+  localStorage.removeItem('f1_admin_token');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+async function apiFetch(path, opts={}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', ...(opts.headers||{})}
+  });
+  if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+  return res.json();
+}
+
+function toast(msg, type='success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = type;
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 3000);
+}
+
+function startApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  showPage('dashboard');
+}
+
+function showPage(page) {
+  currentPage = page;
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.textContent.trim().toLowerCase().includes(page.toLowerCase()));
+  });
+  const titles = {dashboard:'Dashboard',users:'Users',teams:'Teams',leagues:'Leagues',drivers:'Drivers',races:'Races',broadcast:'Broadcast Message',logs:'Admin Logs',suspicious:'Suspicious Activity',sql:'SQL Query'};
+  document.getElementById('page-title').textContent = titles[page] || page;
+  const content = document.getElementById('page-content');
+  content.innerHTML = '<div class="loader">Loading...</div>';
+  
+  const renderers = {dashboard:renderDashboard,users:renderUsers,teams:renderTeams,leagues:renderLeagues,drivers:renderDrivers,races:renderRaces,broadcast:renderBroadcast,logs:renderLogs,suspicious:renderSuspicious,sql:renderSQL};
+  if (renderers[page]) renderers[page](content);
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+async function renderDashboard(el) {
+  const stats = await apiFetch('/api/stats');
+  el.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Total Users</div><div class="stat-value">${stats.total_users}</div><div class="stat-icon">👥</div></div>
+      <div class="stat-card green"><div class="stat-label">Active Teams</div><div class="stat-value">${stats.total_teams}</div><div class="stat-icon">🏁</div></div>
+      <div class="stat-card blue"><div class="stat-label">Leagues</div><div class="stat-value">${stats.total_leagues}</div><div class="stat-icon">🏆</div></div>
+      <div class="stat-card amber"><div class="stat-label">Active Leagues</div><div class="stat-value">${stats.active_leagues}</div><div class="stat-icon">⚡</div></div>
+      <div class="stat-card"><div class="stat-label">Total Races</div><div class="stat-value">${stats.total_races}</div><div class="stat-icon">🏎️</div></div>
+      <div class="stat-card"><div class="stat-label">Drivers DB</div><div class="stat-value">${stats.total_drivers}</div><div class="stat-icon">🪪</div></div>
+      <div class="stat-card"><div class="stat-label">Banned Users</div><div class="stat-value" style="color:var(--red)">${stats.banned_users}</div><div class="stat-icon">🚫</div></div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;margin-top:8px">
+      <h3 style="font-size:14px;margin-bottom:16px;color:var(--muted)">⚡ Quick Actions</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-info" onclick="showPage('users')">👥 Manage Users</button>
+        <button class="btn btn-info" onclick="showPage('teams')">🏁 Manage Teams</button>
+        <button class="btn btn-info" onclick="showPage('leagues')">🏆 Manage Leagues</button>
+        <button class="btn btn-danger" onclick="showPage('suspicious')">⚠️ Check Suspicious</button>
+        <button class="btn btn-primary" onclick="showPage('broadcast')">📢 Send Broadcast</button>
+        <button class="btn btn-success" onclick="showPage('sql')">🗄️ SQL Query</button>
+      </div>
+    </div>`;
+}
+
+// ── Users ─────────────────────────────────────────────────────────────────────
+let userPage = 1, userSearch = '';
+async function renderUsers(el) {
+  const data = await apiFetch(`/api/users?page=${userPage}&search=${encodeURIComponent(userSearch)}`);
+  el.innerHTML = `
+    <div class="table-card">
+      <div class="table-header">
+        <h3>Users (${data.total})</h3>
+        <input class="search-box" placeholder="Search username / name..." value="${userSearch}" oninput="userSearch=this.value;userPage=1;renderUsers(document.getElementById('page-content'))">
+      </div>
+      <div class="overflow-x">
+        <table>
+          <thead><tr>
+            <th>ID</th><th>Name</th><th>Username</th><th>Team</th><th>Status</th><th>Commands</th><th>Joined</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            ${data.users.map(u => `<tr>
+              <td class="text-muted">${u.id}</td>
+              <td>${u.first_name}</td>
+              <td>${u.username ? '@'+u.username : '<span class="text-muted">—</span>'}</td>
+              <td>${u.team_name ? `<span style="color:var(--blue)">${u.team_name}</span>` : '<span class="text-muted">No team</span>'}</td>
+              <td>${u.is_banned ? '<span class="badge-status badge-banned">Banned</span>' : (u.is_admin ? '<span class="badge-status badge-active">Admin</span>' : '<span class="badge-status badge-normal">Active</span>')}</td>
+              <td class="text-muted">${u.command_count||0}</td>
+              <td class="text-muted">${u.created_at ? u.created_at.slice(0,10) : '—'}</td>
+              <td>
+                <div class="btn-group">
+                  ${u.is_banned 
+                    ? `<button class="btn btn-success btn-sm" onclick="unbanUser(${u.id})">Unban</button>`
+                    : `<button class="btn btn-danger btn-sm" onclick="banUser(${u.id}, '${u.first_name}')">Ban</button>`}
+                  ${u.team_id ? `<button class="btn btn-info btn-sm" onclick="editTeamModal(${u.team_id})">Team</button>` : ''}
+                  <button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id}, '${u.first_name}')">Del</button>
+                </div>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-footer">
+        <span class="page-info">Page ${userPage} of ${data.pages}</span>
+        <div class="pagination">
+          ${userPage > 1 ? `<button class="page-btn" onclick="userPage=${userPage-1};renderUsers(document.getElementById('page-content'))">←</button>` : ''}
+          ${[...Array(Math.min(5,data.pages))].map((_,i) => `<button class="page-btn ${userPage===i+1?'active':''}" onclick="userPage=${i+1};renderUsers(document.getElementById('page-content'))">${i+1}</button>`).join('')}
+          ${userPage < data.pages ? `<button class="page-btn" onclick="userPage=${userPage+1};renderUsers(document.getElementById('page-content'))">→</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function banUser(id, name) {
+  const reason = prompt(`Ban reason for ${name}?`, 'Admin action');
+  if (reason === null) return;
+  await apiFetch('/api/users/ban', {method:'POST', body: JSON.stringify({user_id:id, reason})});
+  toast(`✅ ${name} banned`);
+  renderUsers(document.getElementById('page-content'));
+}
+
+async function unbanUser(id) {
+  await apiFetch('/api/users/unban', {method:'POST', body: JSON.stringify({user_id:id})});
+  toast('✅ User unbanned', 'success');
+  renderUsers(document.getElementById('page-content'));
+}
+
+async function deleteUser(id, name) {
+  if (!confirm(`DELETE user ${name} (${id}) permanently?`)) return;
+  await apiFetch(`/api/users/${id}`, {method:'DELETE'});
+  toast('🗑️ User deleted');
+  renderUsers(document.getElementById('page-content'));
+}
+
+// ── Teams ─────────────────────────────────────────────────────────────────────
+let teamPage = 1, teamSearch = '';
+async function renderTeams(el) {
+  const data = await apiFetch(`/api/teams?page=${teamPage}&search=${encodeURIComponent(teamSearch)}`);
+  el.innerHTML = `
+    <div class="table-card">
+      <div class="table-header">
+        <h3>Teams (${data.total})</h3>
+        <div style="display:flex;gap:8px">
+          <input class="search-box" placeholder="Search team name..." value="${teamSearch}" oninput="teamSearch=this.value;teamPage=1;renderTeams(document.getElementById('page-content'))">
+        </div>
+      </div>
+      <div class="overflow-x">
+        <table>
+          <thead><tr>
+            <th>Team</th><th>Owner</th><th>League</th><th>Budget</th><th>Points</th><th>W/P</th><th>Car</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            ${data.teams.map(t => `<tr>
+              <td><strong>${t.name}</strong></td>
+              <td>${t.owner_name}${t.owner_username ? ' <span class="text-muted">@'+t.owner_username+'</span>' : ''}</td>
+              <td>${t.league_name ? `<span style="color:var(--blue)">${t.league_name}</span>` : '<span class="text-muted">No league</span>'}</td>
+              <td>💰 ${(t.budget/1e6).toFixed(1)}M</td>
+              <td style="color:var(--amber)">${t.total_points} pts</td>
+              <td>${t.wins}W / ${t.podiums}P</td>
+              <td>
+                <div style="display:flex;flex-direction:column;gap:2px;min-width:80px">
+                  ${['engine','aerodynamics','chassis','reliability'].map(s => `
+                    <div class="stat-row">
+                      <span style="width:28px">${s[0].toUpperCase()}</span>
+                      <div class="stat-bar"><div class="stat-bar-fill" style="width:${t[s]}%"></div></div>
+                      <span style="min-width:24px">${t[s]}</span>
+                    </div>`).join('')}
+                </div>
+              </td>
+              <td>
+                <div class="btn-group">
+                  <button class="btn btn-info btn-sm" onclick="editTeamModal(${t.id})">Edit</button>
+                  <button class="btn btn-success btn-sm" onclick="moneyModal(${t.id}, '${t.name}')">💰</button>
+                  <button class="btn btn-danger btn-sm" onclick="deleteTeam(${t.id}, '${t.name}')">Del</button>
+                </div>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-footer">
+        <span class="page-info">Page ${teamPage} of ${data.pages}</span>
+        <div class="pagination">
+          ${teamPage > 1 ? `<button class="page-btn" onclick="teamPage=${teamPage-1};renderTeams(document.getElementById('page-content'))">←</button>` : ''}
+          ${[...Array(Math.min(5,data.pages))].map((_,i) => `<button class="page-btn ${teamPage===i+1?'active':''}" onclick="teamPage=${i+1};renderTeams(document.getElementById('page-content'))">${i+1}</button>`).join('')}
+          ${teamPage < data.pages ? `<button class="page-btn" onclick="teamPage=${teamPage+1};renderTeams(document.getElementById('page-content'))">→</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function editTeamModal(teamId) {
+  const data = await apiFetch(`/api/teams?page=1&per_page=1000`);
+  const team = data.teams.find(t => t.id === teamId);
+  if (!team) return;
+  openModal(`
+    <h3>✏️ Edit Team: ${team.name}</h3>
+    <div class="form-group"><label>Budget (₹ number)</label><input id="m-budget" type="number" value="${team.budget}"></div>
+    <div class="form-group"><label>Total Points</label><input id="m-points" type="number" value="${team.total_points}"></div>
+    <div class="form-group"><label>Wins</label><input id="m-wins" type="number" value="${team.wins}"></div>
+    <div class="form-group"><label>Podiums</label><input id="m-podiums" type="number" value="${team.podiums}"></div>
+    <div class="form-group"><label>Reputation (0-100)</label><input id="m-rep" type="number" min="0" max="100" value="${team.reputation}"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>Engine</label><input id="m-engine" type="number" min="1" max="100" value="${team.engine}"></div>
+      <div class="form-group"><label>Aero</label><input id="m-aero" type="number" min="1" max="100" value="${team.aerodynamics}"></div>
+      <div class="form-group"><label>Chassis</label><input id="m-chassis" type="number" min="1" max="100" value="${team.chassis}"></div>
+      <div class="form-group"><label>Reliability</label><input id="m-rel" type="number" min="1" max="100" value="${team.reliability}"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveTeamEdit(${teamId})">Save Changes</button>
+    </div>`);
+}
+
+async function saveTeamEdit(teamId) {
+  const payload = {
+    team_id: teamId,
+    budget: parseInt(document.getElementById('m-budget').value),
+    total_points: parseInt(document.getElementById('m-points').value),
+    wins: parseInt(document.getElementById('m-wins').value),
+    podiums: parseInt(document.getElementById('m-podiums').value),
+    reputation: parseInt(document.getElementById('m-rep').value),
+    engine: parseInt(document.getElementById('m-engine').value),
+    aerodynamics: parseInt(document.getElementById('m-aero').value),
+    chassis: parseInt(document.getElementById('m-chassis').value),
+    reliability: parseInt(document.getElementById('m-rel').value),
+  };
+  await apiFetch('/api/teams/edit', {method:'POST', body: JSON.stringify(payload)});
+  closeModal();
+  toast('✅ Team updated!');
+  renderTeams(document.getElementById('page-content'));
+}
+
+function moneyModal(teamId, teamName) {
+  openModal(`
+    <h3>💰 Give/Take Money: ${teamName}</h3>
+    <div class="form-group"><label>Amount (+ to give, - to deduct)</label><input id="m-money" type="number" placeholder="e.g. 5000000 or -1000000"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="applyMoney(${teamId})">Apply</button>
+    </div>`);
+}
+
+async function applyMoney(teamId) {
+  const amount = parseInt(document.getElementById('m-money').value);
+  const res = await apiFetch('/api/teams/money', {method:'POST', body: JSON.stringify({team_id:teamId, amount})});
+  closeModal();
+  toast(`✅ Done! New budget: ₹${(res.new_budget/1e6).toFixed(2)}M`);
+  renderTeams(document.getElementById('page-content'));
+}
+
+async function deleteTeam(id, name) {
+  if (!confirm(`DELETE team "${name}" permanently?`)) return;
+  await apiFetch(`/api/teams/${id}`, {method:'DELETE'});
+  toast('🗑️ Team deleted');
+  renderTeams(document.getElementById('page-content'));
+}
+
+// ── Leagues ───────────────────────────────────────────────────────────────────
+let leaguePage = 1, leagueSearch = '';
+async function renderLeagues(el) {
+  const data = await apiFetch(`/api/leagues?page=${leaguePage}&search=${encodeURIComponent(leagueSearch)}`);
+  el.innerHTML = `
+    <div class="table-card">
+      <div class="table-header">
+        <h3>Leagues (${data.total})</h3>
+        <input class="search-box" placeholder="Search league..." value="${leagueSearch}" oninput="leagueSearch=this.value;leaguePage=1;renderLeagues(document.getElementById('page-content'))">
+      </div>
+      <div class="overflow-x">
+        <table>
+          <thead><tr>
+            <th>Name</th><th>Owner</th><th>Teams</th><th>Status</th><th>Season/Race</th><th>Invite Code</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            ${data.leagues.map(l => `<tr>
+              <td><strong>${l.name}</strong>${l.is_public ? '' : ' 🔒'}</td>
+              <td>${l.owner_name}</td>
+              <td>${l.team_count}/${l.max_teams}</td>
+              <td>${statusBadge(l.status)}</td>
+              <td>S${l.current_season} R${l.current_race}</td>
+              <td><code style="background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:12px">${l.invite_code}</code></td>
+              <td>
+                <div class="btn-group">
+                  <button class="btn btn-info btn-sm" onclick="editLeagueModal(${l.id})">Edit</button>
+                  <button class="btn btn-danger btn-sm" onclick="deleteLeague(${l.id}, '${l.name}')">Del</button>
+                </div>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-footer">
+        <span class="page-info">Page ${leaguePage} of ${data.pages}</span>
+        <div class="pagination">
+          ${leaguePage > 1 ? `<button class="page-btn" onclick="leaguePage=${leaguePage-1};renderLeagues(document.getElementById('page-content'))">←</button>` : ''}
+          ${[...Array(Math.min(5,data.pages))].map((_,i) => `<button class="page-btn ${leaguePage===i+1?'active':''}" onclick="leaguePage=${i+1};renderLeagues(document.getElementById('page-content'))">${i+1}</button>`).join('')}
+          ${leaguePage < data.pages ? `<button class="page-btn" onclick="leaguePage=${leaguePage+1};renderLeagues(document.getElementById('page-content'))">→</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function editLeagueModal(leagueId) {
+  const data = await apiFetch(`/api/leagues?page=1&per_page=1000`);
+  const league = data.leagues.find(l => l.id === leagueId);
+  if (!league) return;
+  openModal(`
+    <h3>✏️ Edit League: ${league.name}</h3>
+    <div class="form-group"><label>Status</label>
+      <select id="m-lstatus">
+        ${['waiting','active','paused','finished'].map(s => `<option value="${s}" ${league.status===s?'selected':''}>${s}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group"><label>Max Teams</label><input id="m-lmax" type="number" value="${league.max_teams}"></div>
+    <div class="form-group"><label>Description</label><textarea id="m-ldesc">${league.description||''}</textarea></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveLeagueEdit(${leagueId})">Save</button>
+    </div>`);
+}
+
+async function saveLeagueEdit(leagueId) {
+  await apiFetch('/api/leagues/edit', {method:'POST', body: JSON.stringify({
+    league_id: leagueId,
+    status: document.getElementById('m-lstatus').value,
+    max_teams: parseInt(document.getElementById('m-lmax').value),
+    description: document.getElementById('m-ldesc').value,
+  })});
+  closeModal();
+  toast('✅ League updated!');
+  renderLeagues(document.getElementById('page-content'));
+}
+
+async function deleteLeague(id, name) {
+  if (!confirm(`DELETE league "${name}" permanently? All teams will be detached!`)) return;
+  await apiFetch(`/api/leagues/${id}`, {method:'DELETE'});
+  toast('🗑️ League deleted');
+  renderLeagues(document.getElementById('page-content'));
+}
+
+// ── Drivers ───────────────────────────────────────────────────────────────────
+let driverPage = 1, driverSearch = '';
+async function renderDrivers(el) {
+  const data = await apiFetch(`/api/drivers?page=${driverPage}&search=${encodeURIComponent(driverSearch)}`);
+  el.innerHTML = `
+    <div class="table-card">
+      <div class="table-header">
+        <h3>Drivers (${data.total})</h3>
+        <input class="search-box" placeholder="Search driver..." value="${driverSearch}" oninput="driverSearch=this.value;driverPage=1;renderDrivers(document.getElementById('page-content'))">
+      </div>
+      <div class="overflow-x">
+        <table>
+          <thead><tr>
+            <th>Name</th><th>Nationality</th><th>Overall</th><th>Pace</th><th>Racecraft</th><th>Consistency</th><th>Salary</th><th>Team</th>
+          </tr></thead>
+          <tbody>
+            ${data.drivers.map(d => `<tr>
+              <td><strong>${d.name}</strong></td>
+              <td class="text-muted">${d.nationality||'—'}</td>
+              <td><span style="color:${d.overall_rating>=85?'var(--green)':d.overall_rating>=70?'var(--amber)':'var(--muted)'};font-weight:700">${d.overall_rating}</span></td>
+              <td>${d.pace||'—'}</td>
+              <td>${d.racecraft||'—'}</td>
+              <td>${d.consistency||'—'}</td>
+              <td class="text-muted">${d.salary ? '₹'+(d.salary/1e6).toFixed(1)+'M' : '—'}</td>
+              <td>${d.team_name ? `<span style="color:var(--blue)">${d.team_name}</span>` : '<span class="text-muted">Free Agent</span>'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-footer">
+        <span class="page-info">Page ${driverPage} of ${data.pages}</span>
+        <div class="pagination">
+          ${driverPage > 1 ? `<button class="page-btn" onclick="driverPage=${driverPage-1};renderDrivers(document.getElementById('page-content'))">←</button>` : ''}
+          ${[...Array(Math.min(5,data.pages))].map((_,i) => `<button class="page-btn ${driverPage===i+1?'active':''}" onclick="driverPage=${i+1};renderDrivers(document.getElementById('page-content'))">${i+1}</button>`).join('')}
+          ${driverPage < data.pages ? `<button class="page-btn" onclick="driverPage=${driverPage+1};renderDrivers(document.getElementById('page-content'))">→</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Races ─────────────────────────────────────────────────────────────────────
+let racePage = 1;
+async function renderRaces(el) {
+  const data = await apiFetch(`/api/races?page=${racePage}`);
+  el.innerHTML = `
+    <div class="table-card">
+      <div class="table-header"><h3>Races (${data.total})</h3></div>
+      <div class="overflow-x">
+        <table>
+          <thead><tr>
+            <th>Race</th><th>Circuit</th><th>League</th><th>Season</th><th>Round</th><th>Status</th><th>Weather</th><th>Laps</th>
+          </tr></thead>
+          <tbody>
+            ${data.races.map(r => `<tr>
+              <td><strong>${r.name}</strong></td>
+              <td class="text-muted">${r.circuit||'—'}</td>
+              <td style="color:var(--blue)">${r.league_name}</td>
+              <td>${r.season}</td>
+              <td>R${r.round_number}</td>
+              <td>${statusBadge(r.status)}</td>
+              <td class="text-muted">${r.weather||'—'}</td>
+              <td>${r.laps}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-footer">
+        <span class="page-info">Page ${racePage} of ${data.pages}</span>
+        <div class="pagination">
+          ${racePage > 1 ? `<button class="page-btn" onclick="racePage=${racePage-1};renderRaces(document.getElementById('page-content'))">←</button>` : ''}
+          ${[...Array(Math.min(5,data.pages))].map((_,i) => `<button class="page-btn ${racePage===i+1?'active':''}" onclick="racePage=${i+1};renderRaces(document.getElementById('page-content'))">${i+1}</button>`).join('')}
+          ${racePage < data.pages ? `<button class="page-btn" onclick="racePage=${racePage+1};renderRaces(document.getElementById('page-content'))">→</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Broadcast ─────────────────────────────────────────────────────────────────
+function renderBroadcast(el) {
+  el.innerHTML = `
+    <div style="max-width:600px">
+      <div class="table-card" style="padding:24px">
+        <h3 style="margin-bottom:20px">📢 Broadcast Message to All Users</h3>
+        <div class="form-group">
+          <label>Message (Telegram HTML supported)</label>
+          <textarea id="bc-msg" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px;color:var(--text);font-size:13px;min-height:140px;resize:vertical" placeholder="e.g. 🏎️ <b>Race Weekend!</b> New race starting in 1 hour..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Target User IDs (optional, comma-separated — leave blank for ALL)</label>
+          <input id="bc-ids" type="text" placeholder="e.g. 123456, 789012" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text)">
+        </div>
+        <button class="btn btn-primary" style="padding:10px 24px" onclick="sendBroadcast()">Send Broadcast</button>
+        <p style="color:var(--muted);font-size:12px;margin-top:12px">⚠️ This queues the message. Your bot must be running to actually send it via Telegram.</p>
+      </div>
+    </div>`;
+}
+
+async function sendBroadcast() {
+  const msg = document.getElementById('bc-msg').value.trim();
+  const ids = document.getElementById('bc-ids').value.trim();
+  if (!msg) return toast('Message is empty!', 'error');
+  
+  const payload = {message: msg};
+  if (ids) payload.user_ids = ids.split(',').map(s => parseInt(s.trim())).filter(Boolean);
+  
+  const res = await apiFetch('/api/broadcast', {method:'POST', body: JSON.stringify(payload)});
+  toast(`✅ Queued for ${res.target_count} users!`);
+}
+
+// ── Logs ───────────────────────────────────────────────────────────────────────
+async function renderLogs(el) {
+  const data = await apiFetch('/api/logs');
+  el.innerHTML = `
+    <div class="table-card">
+      <div class="table-header"><h3>Admin Logs (${data.total})</h3></div>
+      <div class="overflow-x">
+        <table>
+          <thead><tr><th>Time</th><th>Admin</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
+          <tbody>
+            ${data.logs.map(l => `<tr>
+              <td class="text-muted">${l.created_at ? l.created_at.slice(0,16).replace('T',' ') : '—'}</td>
+              <td>${l.admin_name}</td>
+              <td><span style="color:var(--amber)">${l.action}</span></td>
+              <td class="text-muted">${l.target_id||'—'}</td>
+              <td class="text-muted">${l.details||'—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── Suspicious ────────────────────────────────────────────────────────────────
+async function renderSuspicious(el) {
+  const data = await apiFetch('/api/suspicious');
+  el.innerHTML = `
+    <div class="table-card">
+      <div class="table-header"><h3>Suspicious Activity (${data.total})</h3></div>
+      <div class="overflow-x">
+        <table>
+          <thead><tr><th>Time</th><th>User</th><th>Type</th><th>Severity</th><th>Details</th><th>Action</th></tr></thead>
+          <tbody>
+            ${data.items.map(s => `<tr>
+              <td class="text-muted">${s.created_at ? s.created_at.slice(0,16).replace('T',' ') : '—'}</td>
+              <td>${s.user_name} <span class="text-muted">(${s.user_id})</span></td>
+              <td style="color:var(--amber)">${s.activity_type}</td>
+              <td><span class="badge-status ${s.severity==='high'?'badge-banned':s.severity==='medium'?'badge-waiting':'badge-normal'}">${s.severity||'low'}</span></td>
+              <td class="text-muted">${s.details||'—'}</td>
+              <td><button class="btn btn-danger btn-sm" onclick="banUser(${s.user_id}, 'User ${s.user_id}')">Ban</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── SQL ───────────────────────────────────────────────────────────────────────
+function renderSQL(el) {
+  el.innerHTML = `
+    <div style="max-width:800px">
+      <div class="table-card sql-panel" style="padding:24px">
+        <h3 style="margin-bottom:16px">🗄️ SQL Query (SELECT only)</h3>
+        <div class="form-group">
+          <textarea id="sql-input" class="sql-panel" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px;color:#0f0;font-family:monospace;font-size:13px;min-height:100px" placeholder="SELECT id, username, first_name FROM users WHERE is_banned = true LIMIT 20"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="runSQL()">▶ Run Query</button>
+          <button class="btn btn-info btn-sm" onclick="document.getElementById('sql-input').value='SELECT * FROM users ORDER BY created_at DESC LIMIT 10'">All users</button>
+          <button class="btn btn-info btn-sm" onclick="document.getElementById('sql-input').value='SELECT id, name, budget, total_points FROM teams ORDER BY total_points DESC LIMIT 20'">Top teams</button>
+          <button class="btn btn-info btn-sm" onclick="document.getElementById('sql-input').value='SELECT l.name, COUNT(t.id) as teams, l.status FROM leagues l LEFT JOIN teams t ON t.league_id = l.id GROUP BY l.id ORDER BY teams DESC'">League stats</button>
+        </div>
+        <div id="sql-result"></div>
+      </div>
+    </div>`;
+}
+
+async function runSQL() {
+  const sql = document.getElementById('sql-input').value.trim();
+  if (!sql) return;
+  const resultEl = document.getElementById('sql-result');
+  resultEl.innerHTML = '<div class="loader">Running...</div>';
+  try {
+    const data = await apiFetch('/api/query', {method:'POST', body: JSON.stringify({sql})});
+    if (!data.rows || data.rows.length === 0) {
+      resultEl.innerHTML = '<div class="loader">No results</div>';
+      return;
+    }
+    resultEl.innerHTML = `
+      <div class="sql-result" style="padding:12px;border:1px solid var(--border);border-radius:6px">
+        <div style="color:var(--muted);font-size:12px;margin-bottom:8px">${data.rows.length} rows</div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr>${data.columns.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+            <tbody>${data.rows.map(r => `<tr>${r.map(v => `<td style="font-family:monospace;font-size:12px">${v===null?'<span class="text-muted">NULL</span>':v}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </div>`;
+  } catch(e) {
+    resultEl.innerHTML = `<div style="color:var(--red);padding:12px;background:rgba(225,6,0,0.1);border-radius:6px">❌ ${e.message}</div>`;
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function statusBadge(s) {
+  const map = {active:'badge-active',waiting:'badge-waiting',finished:'badge-finished',banned:'badge-banned',qualifying:'badge-waiting',racing:'badge-active',paused:'badge-waiting'};
+  return `<span class="badge-status ${map[s]||'badge-normal'}">${s}</span>`;
+}
+
+function openModal(html) {
+  document.getElementById('modal-content').innerHTML = html;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+if (token) {
+  startApp();
+}
+</script>
+</body>
+</html>

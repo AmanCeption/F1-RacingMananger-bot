@@ -590,7 +590,7 @@ class RaceService:
         result = await self.db.execute(
             select(Race).where(
                 and_(Race.league_id == league_id,
-                     Race.status == RaceStatus.SCHEDULED)
+                     Race.status.in_([RaceStatus.SCHEDULED, RaceStatus.QUALIFYING]))
             ).order_by(Race.round.asc()).limit(1)
         )
         return result.scalar_one_or_none()
@@ -626,6 +626,136 @@ class RaceService:
             self.db.add(strat)
         await self.db.flush()
         return True, f"Strategy set: {strategy.upper()} starting on {tyre.title()} tyres!"
+
+    async def run_qualifying(self, league_id: int) -> Optional[dict]:
+        """Run Q1/Q2/Q3 qualifying for the next scheduled race. Saves grid to QualifyingResult."""
+        race = await self.get_next_race(league_id)
+        if not race:
+            return None
+
+        from src.simulation.race_engine import generate_weather, CarEntry, simulate_qualifying, Weather
+
+        weather_val = race.weather  # may already be set from practice
+        if weather_val:
+            weather = Weather(weather_val)
+        else:
+            weather = generate_weather()
+            race.weather = weather.value
+
+        await self.db.flush()
+
+        # Build entries
+        entries = []
+        teams_result = await self.db.execute(select(Team).where(Team.league_id == league_id))
+        teams = teams_result.scalars().all()
+
+        for team in teams:
+            drivers_result = await self.db.execute(
+                select(TeamDriver, Driver)
+                .join(Driver, TeamDriver.driver_id == Driver.id)
+                .where(TeamDriver.team_id == team.id)
+            )
+            staff_result = await self.db.execute(
+                select(TeamStaff, Staff)
+                .join(Staff, TeamStaff.staff_id == Staff.id)
+                .where(TeamStaff.team_id == team.id)
+            )
+            staff_list = staff_result.all()
+            staff_mod = 1.0
+            for ts, s in staff_list:
+                staff_mod *= s.performance_bonus
+            staff_mod = min(1.25, staff_mod)
+
+            for td, d in drivers_result.all():
+                # Check if player set a custom car setup
+                strat_result = await self.db.execute(
+                    select(RaceStrategy).where(
+                        and_(RaceStrategy.race_id == race.id,
+                             RaceStrategy.team_id == team.id,
+                             RaceStrategy.driver_id == d.id)
+                    )
+                )
+                strat = strat_result.scalar_one_or_none()
+                setup = strat.car_setup or {} if strat else {}
+
+                entry = CarEntry(
+                    team_id=team.id,
+                    team_name=team.name,
+                    driver_id=d.id,
+                    driver_name=d.name,
+                    pace=d.pace,
+                    racecraft=d.racecraft,
+                    consistency=d.consistency,
+                    wet_weather=d.wet_weather,
+                    overtaking=d.overtaking,
+                    defence=d.defence,
+                    engine=team.engine,
+                    aerodynamics=team.aerodynamics,
+                    chassis=team.chassis,
+                    reliability=team.reliability,
+                    tyre_mgmt=team.tyres,
+                    pit_crew=team.pit_crew,
+                    staff_modifier=staff_mod,
+                    wing_angle=setup.get("wing_angle", 0),
+                    suspension=setup.get("suspension", 0),
+                    tyre_pressure=setup.get("tyre_pressure", 0),
+                    gear_ratio=setup.get("gear_ratio", 0),
+                )
+                entries.append(entry)
+
+        if not entries:
+            return None
+
+        result = await simulate_qualifying(entries, weather, race.circuit)
+
+        # Clear old qualifying results for this race
+        await self.db.execute(
+            delete(QualifyingResult).where(QualifyingResult.race_id == race.id)
+        )
+
+        # Save grid positions
+        for car in result["grid"]:
+            qt = result["q_times"].get(car.driver_id, {})
+            qr = QualifyingResult(
+                race_id=race.id,
+                team_id=car.team_id,
+                driver_id=car.driver_id,
+                grid_position=car.position,
+                q1_time=qt.get("q1"),
+                q2_time=qt.get("q2"),
+                q3_time=qt.get("q3"),
+            )
+            self.db.add(qr)
+
+        # Mark race as qualifying status
+        race.status = RaceStatus.QUALIFYING
+        await self.db.flush()
+
+        # Format grid for response
+        grid_formatted = []
+        for car in result["grid"]:
+            qt = result["q_times"].get(car.driver_id, {})
+            best_time = qt.get("q3") or qt.get("q2") or qt.get("q1")
+            grid_formatted.append({
+                "position": car.position,
+                "driver": car.driver_name,
+                "team": car.team_name,
+                "q1": qt.get("q1"),
+                "q2": qt.get("q2"),
+                "q3": qt.get("q3"),
+                "best_time": best_time,
+            })
+
+        return {
+            "race_name": race.name,
+            "circuit": race.circuit,
+            "country": race.country,
+            "weather": weather.value,
+            "events": result["events"],
+            "grid": grid_formatted,
+            "pole_time": result["pole_time"],
+            "pole_sitter": result["pole_sitter"],
+        }
 
     async def run_race(self, league_id: int) -> Optional[dict]:
         """Execute next race for a league"""
@@ -708,6 +838,19 @@ class RaceService:
 
         if not entries:
             return None
+
+        # ── Respect qualifying grid order if it exists ──
+        grid_result = await self.db.execute(
+            select(QualifyingResult)
+            .where(QualifyingResult.race_id == race.id)
+            .order_by(QualifyingResult.grid_position.asc())
+        )
+        grid_rows = grid_result.scalars().all()
+        if grid_rows:
+            grid_map = {row.driver_id: row.grid_position for row in grid_rows}
+            entries.sort(key=lambda e: grid_map.get(e.driver_id, 999))
+            for i, entry in enumerate(entries):
+                entry.position = i + 1
 
         # Run simulation
         import asyncio

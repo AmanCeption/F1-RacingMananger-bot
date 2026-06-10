@@ -351,7 +351,7 @@ async def get_races(
     if league_id:
         q = q.where(Race.league_id == league_id)
     total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar()
-    q = q.order_by(Race.created_at.desc()).offset((page-1)*per_page).limit(per_page)
+    q = q.order_by(Race.scheduled_at.desc()).offset((page-1)*per_page).limit(per_page)
     result = (await db.execute(q)).scalars().all()
 
     races = []

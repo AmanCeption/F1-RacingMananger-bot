@@ -436,11 +436,74 @@ async def cmd_practice(message: Message):
         )
 
         report = generate_practice_report(car, weather)
+        # Practice also sets recommended tyre hint stored in race weather
         await message.answer(
             f"🔄 <b>Practice Session — {race.name}</b>\n"
+            f"Circuit: {race.circuit}  {race.country}\n"
             f"Driver: {driver.name}\n\n"
             + report
+            + f"\n\n💡 <b>Next step:</b> /qualifying — Run Q1/Q2/Q3 to set the grid!"
         )
+
+
+# ─────────────────────────────────────────────
+# /qualifying — Full Q1/Q2/Q3 session
+# ─────────────────────────────────────────────
+
+@router.message(Command("qualifying"))
+@router.message(F.text == "🏎️ Qualifying")
+async def cmd_qualifying(message: Message):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team or not team.league_id:
+            await message.answer("❌ You must be in a league to run qualifying!")
+            return
+
+        from src.models.models import League, LeagueStatus as LS
+        from sqlalchemy import select as sa_select
+        league_res = await db.execute(sa_select(League).where(League.id == team.league_id))
+        league = league_res.scalar_one_or_none()
+        if not league or league.owner_id != message.from_user.id:
+            await message.answer("❌ Only the league owner can run qualifying!")
+            return
+
+        await message.answer("⏱️ Running Q1/Q2/Q3 qualifying session... please wait.")
+        result = await RaceService(db).run_qualifying(team.league_id)
+        await db.commit()
+
+    if not result:
+        await message.answer("❌ No upcoming race found, or season not started!")
+        return
+
+    weather_emoji = {
+        "sunny": "☀️", "cloudy": "🌥️", "light_rain": "🌧️",
+        "heavy_rain": "⛈️", "mixed": "🌦️"
+    }
+    w = result.get("weather", "sunny")
+
+    # Send narrative events first (Q1/Q2/Q3 lap times)
+    events = result.get("events", [])
+    if events:
+        events_text = "\n".join(events)
+        if len(events_text) > 3800:
+            events_text = events_text[:3800] + "\n..."
+        await message.answer(events_text)
+
+    # Final grid summary
+    grid_text = f"\n🏁 <b>STARTING GRID — {safe(result['race_name'])}</b>\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    for entry in result.get("grid", [])[:20]:
+        pos = entry["position"]
+        pos_str = medals[pos - 1] if pos <= 3 else f"P{pos:>2}"
+        best = entry.get("best_time")
+        time_str = ""
+        if best:
+            m, s = divmod(best, 60)
+            time_str = f"  {int(m)}:{s:06.3f}"
+        grid_text += f"{pos_str}  {safe(entry['driver'])} <i>({safe(entry['team'])})</i>{time_str}\n"
+
+    grid_text += f"\n🚦 <b>Race starts next!</b> Use /runrace to begin."
+    await message.answer(grid_text)
 
 
 # ─────────────────────────────────────────────

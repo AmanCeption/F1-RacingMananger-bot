@@ -368,6 +368,10 @@ class DriverStanding(Base):
     poles: Mapped[int] = mapped_column(Integer, default=0)
     fastest_laps: Mapped[int] = mapped_column(Integer, default=0)
 
+    __table_args__ = (
+        UniqueConstraint("league_id", "season", "driver_id", name="uq_driver_standing"),
+    )
+
 
 class ConstructorStanding(Base):
     __tablename__ = "constructor_standings"
@@ -379,6 +383,10 @@ class ConstructorStanding(Base):
     points: Mapped[int] = mapped_column(Integer, default=0)
     wins: Mapped[int] = mapped_column(Integer, default=0)
     podiums: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("league_id", "season", "team_id", name="uq_constructor_standing"),
+    )
 
 
 # ─────────────────────────────────────────────

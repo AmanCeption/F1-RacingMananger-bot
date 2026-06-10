@@ -437,7 +437,7 @@ async def get_drivers(
         q = q.where(~Driver.id.in_(assigned_ids))
 
     total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar()
-    q = q.order_by(Driver.overall_rating.desc()).offset((page-1)*per_page).limit(per_page)
+    q = q.order_by(Driver.name.asc()).offset((page-1)*per_page).limit(per_page)
     result = (await db.execute(q)).scalars().all()
 
     drivers = []

@@ -10,7 +10,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.storage.redis import RedisStorage
 
 from src.core.config import settings
 from src.core.database.session import create_db_and_tables, engine
@@ -20,7 +19,6 @@ from src.bot.middleware.auth import AuthMiddleware
 from src.bot.middleware.anti_cheat import AntiCheatMiddleware
 from src.bot.middleware.logging import LoggingMiddleware
 from src.utils.logger import setup_logging
-from src.dashboard.app import run_dashboard_server
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -94,12 +92,7 @@ async def run_web_server():
 
 # ── Bot ─────────────────────────────────────
 async def run_bot():
-    try:
-        storage = RedisStorage.from_url(settings.REDIS_URL)
-        logger.info("✅ Redis FSM storage connected")
-    except Exception as e:
-        logger.warning(f"⚠️ Redis unavailable, using MemoryStorage: {e}")
-        storage = MemoryStorage()
+    storage = MemoryStorage()
 
     bot = Bot(
         token=settings.BOT_TOKEN,
@@ -143,7 +136,6 @@ async def main():
     setup_logging()
     await asyncio.gather(
         run_web_server(),
-        run_dashboard_server(),
         run_bot(),
     )
 

@@ -1907,12 +1907,13 @@ async def cb_research_tree(callback: CallbackQuery):
         text += "No research nodes available."
     else:
         for node in nodes:
-            done = "✅" if node.get("is_complete") or node.get("done") else "🔒"
+            done = "✅" if node.get("done") else "🔒"
+            stat_label = node.get("stat", "").replace("_", " ").title()
             text += (
                 f"{done} <b>{safe(node['name'])}</b>\n"
                 f"  Cost: {node['rp_cost']} RP + ${node['money_cost']:,}\n"
-                f"  Bonus: +{node['stat_bonus']} to {safe(node['affects'])}\n"
-                f"  Use: /research {tree} {node['key']}\n\n"
+                f"  Bonus: +{node['bonus']} to {stat_label}\n"
+                f"  Use: /research {tree} {node['node']}\n\n"
             )
 
     await callback.message.edit_text(text, reply_markup=research_kb(team_id))

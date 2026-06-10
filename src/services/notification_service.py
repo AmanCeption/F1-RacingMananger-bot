@@ -163,11 +163,86 @@ async def send_outbid_alert(bot: Bot, db: AsyncSession, transfer_id: int, outbid
 
 
 # ─────────────────────────────────────────────
+
+# ─────────────────────────────────────────────
+# RACE RESULTS  (after auto-race runs)
+# ─────────────────────────────────────────────
+
+async def send_race_results(bot: Bot, league_id: int, race_result: dict):
+    """
+    DM every team owner in the league with the race results summary.
+    Call this from auto_run_races() right after run_race() returns.
+    """
+    logger.info(f"Sending race results for league {league_id}")
+    sent = 0
+
+    weather_emojis = {
+        "sunny": "☀️", "cloudy": "🌥️",
+        "light_rain": "🌧️", "heavy_rain": "⛈️", "mixed": "🌦️",
+    }
+    weather_label = weather_emojis.get(race_result.get("weather", ""), "🌤️")
+
+    lines = []
+    for r in race_result.get("results", [])[:5]:
+        if r["dnf"]:
+            lines.append(f"  💥 DNF — {r['driver']} ({r['team']})")
+        else:
+            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(r["position"], f"  P{r['position']}")
+            fl = " ⚡" if r.get("fastest_lap") else ""
+            lines.append(f"  {medal} {r['driver']} ({r['team']}) +{r['points']}pts{fl}")
+
+    top5_text = "\n".join(lines) if lines else "  No results available."
+
+    async with get_session() as db:
+        teams_res = await db.execute(
+            select(Team).where(Team.league_id == league_id)
+        )
+        teams = teams_res.scalars().all()
+
+        for team in teams:
+            user_res = await db.execute(select(User).where(User.id == team.owner_id))
+            user = user_res.scalar_one_or_none()
+            if not user or user.is_banned:
+                continue
+
+            team_result = next(
+                (r for r in race_result.get("results", []) if r["team"] == team.name),
+                None,
+            )
+            if team_result:
+                if team_result["dnf"]:
+                    personal = f"\n\n🔧 <b>Your result:</b> DNF — {team_result['dnf_reason'] or 'mechanical failure'}"
+                else:
+                    personal = (
+                        f"\n\n🏎️ <b>Your result:</b> P{team_result['position']} "
+                        f"— {team_result['points']} pts"
+                        + (" ⚡ Fastest lap!" if team_result.get("fastest_lap") else "")
+                    )
+            else:
+                personal = ""
+
+            insight_text = ""
+            insight = race_result.get("staff_insights", {}).get(team.id)
+            if insight:
+                insight_text = f"\n\n💬 <i>{insight[:200]}</i>"
+
+            text = (
+                f"🏁 <b>{race_result['race_name']}</b> — Finished!\n"
+                f"{weather_label} {race_result.get('circuit', '')}\n\n"
+                f"<b>Top 5:</b>\n{top5_text}"
+                f"{personal}"
+                f"{insight_text}\n\n"
+                f"📊 Full standings: /standings"
+            )
+            if await safe_send(bot, user.id, text):
+                sent += 1
+
+    logger.info(f"Race results sent to {sent} players in league {league_id}.")
+
 # DAILY REWARD REMINDER
 # ─────────────────────────────────────────────
 
-async def send_daily_reminders(bot: Bot):
-    """
+async def send_daily_reminders(bot: Bot):    """
     DM players who haven't claimed their daily reward in 23+ hours.
     Runs once a day via scheduler.
     """

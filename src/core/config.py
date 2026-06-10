@@ -84,3 +84,6 @@ TYRE_DATA = {
     "intermediate": {"pace": 0.90, "wear_rate": 0.025, "color": "🟢"},
     "wet":   {"pace": 0.85, "wear_rate": 0.030, "color": "🔵"},
 }
+
+# Dashboard
+DASHBOARD_SECRET: str = os.getenv("DASHBOARD_SECRET", "changeme123")

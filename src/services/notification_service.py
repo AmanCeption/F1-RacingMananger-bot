@@ -242,7 +242,8 @@ async def send_race_results(bot: Bot, league_id: int, race_result: dict):
 # DAILY REWARD REMINDER
 # ─────────────────────────────────────────────
 
-async def send_daily_reminders(bot: Bot):    """
+async def send_daily_reminders(bot: Bot):
+    """
     DM players who haven't claimed their daily reward in 23+ hours.
     Runs once a day via scheduler.
     """

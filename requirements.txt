@@ -9,3 +9,4 @@ greenlet==3.0.3
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 PyJWT>=2.8.0
+python-jose[cryptography]>=3.3.0

@@ -6,3 +6,6 @@ APScheduler==3.10.4
 python-dotenv==1.0.1
 aiohttp==3.9.5
 greenlet==3.0.3
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+PyJWT>=2.8.0

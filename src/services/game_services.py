@@ -706,7 +706,8 @@ class RaceService:
         if not entries:
             return None
 
-        result = await simulate_qualifying(entries, weather, race.circuit)
+        import asyncio
+        result = await asyncio.to_thread(simulate_qualifying, entries, weather, race.circuit)
 
         # Clear old qualifying results for this race
         await self.db.execute(
@@ -852,11 +853,74 @@ class RaceService:
             for i, entry in enumerate(entries):
                 entry.position = i + 1
 
-        # Run simulation
+        # Run simulation in background thread (CPU-bound — must not block the event loop)
         import asyncio
-        result = await simulate_race(entries, race.circuit, race.laps, weather)
+        result = await asyncio.to_thread(simulate_race, entries, race.circuit, race.laps, weather)
 
-        # Save results & update standings
+        # ── Step 1: Save results & update standings ──────────────────────────
+        await self._save_race_results(race, teams, league_id, result)
+
+        # ── Step 2: Award prize money ─────────────────────────────────────────
+        await self._award_prize_money(teams, result)
+
+        # ── Step 3: Process sponsors (independent — failure must not kill race) ──
+        try:
+            await self._process_all_sponsors(result)
+        except Exception as e:
+            logger.error(f"Sponsor processing failed for race {race.id}: {e}")
+
+        # ── Step 4: Check achievements (independent) ──────────────────────────
+        try:
+            await self._check_all_achievements(result)
+        except Exception as e:
+            logger.error(f"Achievement check failed for race {race.id}: {e}")
+
+        # ── Step 5: Mark race finished & generate staff insights ──────────────
+        race.status = RaceStatus.FINISHED
+        race.finished_at = datetime.utcnow()
+        race.race_log = result["events"]
+
+        team_insights = await self._generate_staff_insights(teams, result, league_id)
+        result["staff_insights"] = team_insights
+
+        # ── Step 6: Advance league race counter / end season ──────────────────
+        league_result = await self.db.execute(select(League).where(League.id == league_id))
+        league = league_result.scalar_one_or_none()
+        if league:
+            league.current_race += 1
+            if league.current_race >= settings.SEASON_RACES:
+                await self._end_season(league)
+
+        await self.db.flush()
+
+        # Format result for handler
+        formatted_results = [
+            {
+                "position": car.position if not car.is_dnf else None,
+                "driver": car.driver_name,
+                "team": car.team_name,
+                "points": F1_POINTS.get(car.position, 0) if not car.is_dnf else 0,
+                "dnf": car.is_dnf,
+                "dnf_reason": car.dnf_reason,
+                "fastest_lap": car.has_fastest_lap,
+            }
+            for car in result["results"]
+        ]
+
+        return {
+            "race_name": race.name,
+            "circuit": race.circuit,
+            "country": race.country,
+            "weather": result["weather"].value if hasattr(result["weather"], "value") else str(result["weather"]),
+            "results": formatted_results,
+            "events": result["events"],
+            "staff_insights": result.get("staff_insights", {}),
+        }
+
+    # ── Private sub-methods ──────────────────────────────────────────────────
+
+    async def _save_race_results(self, race, teams: list, league_id: int, result: dict):
+        """Save RaceResult rows, update team stats, update standings."""
         for car in result["results"]:
             points = F1_POINTS.get(car.position, 0) if not car.is_dnf else 0
 
@@ -873,7 +937,6 @@ class RaceService:
             )
             self.db.add(race_result)
 
-            # Update team stats
             team = next((t for t in teams if t.id == car.team_id), None)
             if team and not car.is_dnf:
                 team.total_points = (team.total_points or 0) + points
@@ -882,32 +945,35 @@ class RaceService:
                 if car.position and car.position <= 3:
                     team.podiums = (team.podiums or 0) + 1
 
-            # Update constructor standings
             await self._update_constructor_standing(league_id, race.season, car.team_id, points)
             pos = car.position if not car.is_dnf else None
-            await self._update_driver_standing(league_id, race.season, car.driver_id, car.team_id, points,
-                                                pos == 1, bool(pos and pos <= 3), car.has_fastest_lap)
+            await self._update_driver_standing(
+                league_id, race.season, car.driver_id, car.team_id, points,
+                pos == 1, bool(pos and pos <= 3), car.has_fastest_lap,
+            )
 
-            # Pay sponsors
-            await self._process_sponsors(car.team_id, car.position)
-
-            # Check achievements
-            await self._check_achievements(car.team_id, car.position, result["weather"])
-
-        # Prize money
+    async def _award_prize_money(self, teams: list, result: dict):
+        """Pay top-10 finishers their prize money."""
+        prizes = [5_000_000, 3_000_000, 2_000_000, 1_500_000, 1_000_000,
+                  800_000, 600_000, 400_000, 200_000, 100_000]
         for i, car in enumerate(result["results"][:10]):
-            prize = [5_000_000, 3_000_000, 2_000_000, 1_500_000, 1_000_000,
-                     800_000, 600_000, 400_000, 200_000, 100_000][i]
             team = next((t for t in teams if t.id == car.team_id), None)
             if team:
-                team.budget += prize
+                team.budget += prizes[i]
 
-        race.status = RaceStatus.FINISHED
-        race.finished_at = datetime.utcnow()
-        race.race_log = result["events"]
+    async def _process_all_sponsors(self, result: dict):
+        """Process sponsor contracts for every car in the result."""
+        for car in result["results"]:
+            await self._process_sponsors(car.team_id, car.position if not car.is_dnf else None)
 
-        # Generate staff insights per team
-        team_insights = {}
+    async def _check_all_achievements(self, result: dict):
+        """Check achievements for every car in the result."""
+        weather = result["weather"]
+        for car in result["results"]:
+            await self._check_achievements(car.team_id, car.position if not car.is_dnf else None, weather)
+
+    async def _generate_staff_insights(self, teams: list, result: dict, league_id: int) -> dict:
+        """Generate per-team staff insights for the post-race report."""
         next_race_result = await self.db.execute(
             select(Race).where(
                 and_(Race.league_id == league_id, Race.status == RaceStatus.SCHEDULED)
@@ -916,6 +982,7 @@ class RaceService:
         next_race = next_race_result.scalar_one_or_none()
         next_circuit = next_race.circuit if next_race else "the next race"
 
+        team_insights = {}
         for team in teams:
             staff_result = await self.db.execute(
                 select(TeamStaff, Staff)
@@ -925,50 +992,15 @@ class RaceService:
             team_staff = staff_result.all()
             if team_staff:
                 team_stats = {
-                    "engine": team.engine,
-                    "aerodynamics": team.aerodynamics,
-                    "chassis": team.chassis,
-                    "reliability": team.reliability,
-                    "tyres": team.tyres,
-                    "pit_crew": team.pit_crew,
+                    "engine": team.engine, "aerodynamics": team.aerodynamics,
+                    "chassis": team.chassis, "reliability": team.reliability,
+                    "tyres": team.tyres, "pit_crew": team.pit_crew,
                 }
                 team_insights[team.id] = generate_staff_race_insights(
                     team_staff, result, team.id, team_stats, next_circuit
                 )
-        result["staff_insights"] = team_insights
+        return team_insights
 
-        # Update league race counter
-        league_result = await self.db.execute(select(League).where(League.id == league_id))
-        league = league_result.scalar_one_or_none()
-        if league:
-            league.current_race += 1
-            if league.current_race >= settings.SEASON_RACES:
-                await self._end_season(league)
-
-        await self.db.flush()
-
-        # Format result for handler
-        formatted_results = []
-        for car in result["results"]:
-            formatted_results.append({
-                "position": car.position if not car.is_dnf else None,
-                "driver": car.driver_name,
-                "team": car.team_name,
-                "points": F1_POINTS.get(car.position, 0) if not car.is_dnf else 0,
-                "dnf": car.is_dnf,
-                "dnf_reason": car.dnf_reason,
-                "fastest_lap": car.has_fastest_lap,
-            })
-
-        return {
-            "race_name": race.name,
-            "circuit": race.circuit,
-            "country": race.country,
-            "weather": result["weather"].value if hasattr(result["weather"], "value") else str(result["weather"]),
-            "results": formatted_results,
-            "events": result["events"],
-            "staff_insights": result.get("staff_insights", {}),
-        }
 
     async def _update_constructor_standing(self, league_id, season, team_id, points):
         result = await self.db.execute(

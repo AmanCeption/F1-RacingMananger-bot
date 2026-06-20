@@ -88,7 +88,158 @@ REAL_DRIVERS = [
     {"name": "Logan Sargeant", "nationality": "American", "age": 23, "number": 2,
      "skill": 72, "racecraft": 70, "pace": 73, "consistency": 71, "wet_weather": 70,
      "overtaking": 68, "defence": 72, "development_potential": 80, "base_salary": 1_500_000},
+
+    # ── Legends / Retired ────────────────────────────────────────────────
+    {"name": "Sebastian Vettel", "nationality": "German", "age": 37, "number": 5,
+     "skill": 96, "racecraft": 97, "pace": 95, "consistency": 94, "wet_weather": 93,
+     "overtaking": 92, "defence": 96, "development_potential": 40, "base_salary": 5_000_000},
+
+    {"name": "Kimi Raikkonen", "nationality": "Finnish", "age": 45, "number": 7,
+     "skill": 94, "racecraft": 93, "pace": 93, "consistency": 90, "wet_weather": 91,
+     "overtaking": 88, "defence": 90, "development_potential": 30, "base_salary": 3_000_000},
+
+    {"name": "Nico Rosberg", "nationality": "German", "age": 39, "number": 6,
+     "skill": 91, "racecraft": 89, "pace": 90, "consistency": 92, "wet_weather": 88,
+     "overtaking": 84, "defence": 91, "development_potential": 35, "base_salary": 3_500_000},
+
+    {"name": "Jenson Button", "nationality": "British", "age": 44, "number": 22,
+     "skill": 90, "racecraft": 91, "pace": 88, "consistency": 90, "wet_weather": 95,
+     "overtaking": 86, "defence": 87, "development_potential": 30, "base_salary": 2_500_000},
+
+    {"name": "Felipe Massa", "nationality": "Brazilian", "age": 43, "number": 19,
+     "skill": 86, "racecraft": 85, "pace": 85, "consistency": 84, "wet_weather": 83,
+     "overtaking": 80, "defence": 84, "development_potential": 30, "base_salary": 2_000_000},
+
+    {"name": "Romain Grosjean", "nationality": "French", "age": 38, "number": 8,
+     "skill": 82, "racecraft": 81, "pace": 83, "consistency": 76, "wet_weather": 80,
+     "overtaking": 79, "defence": 80, "development_potential": 35, "base_salary": 1_500_000},
+
+    {"name": "Daniil Kvyat", "nationality": "Russian", "age": 30, "number": 26,
+     "skill": 81, "racecraft": 82, "pace": 82, "consistency": 78, "wet_weather": 79,
+     "overtaking": 83, "defence": 79, "development_potential": 50, "base_salary": 1_500_000},
+
+    {"name": "Robert Kubica", "nationality": "Polish", "age": 40, "number": 88,
+     "skill": 83, "racecraft": 84, "pace": 81, "consistency": 78, "wet_weather": 85,
+     "overtaking": 80, "defence": 82, "development_potential": 30, "base_salary": 1_200_000},
+
+    {"name": "Pastor Maldonado", "nationality": "Venezuelan", "age": 39, "number": 13,
+     "skill": 76, "racecraft": 72, "pace": 80, "consistency": 58, "wet_weather": 72,
+     "overtaking": 74, "defence": 68, "development_potential": 25, "base_salary": 1_000_000},
+
+    {"name": "Jules Bianchi", "nationality": "French", "age": 25, "number": 17,
+     "skill": 87, "racecraft": 86, "pace": 88, "consistency": 85, "wet_weather": 86,
+     "overtaking": 83, "defence": 84, "development_potential": 95, "base_salary": 2_000_000},
+
+    # ── Mid-2010s Grid ───────────────────────────────────────────────────
+    {"name": "Felipe Nasr", "nationality": "Brazilian", "age": 32, "number": 12,
+     "skill": 77, "racecraft": 76, "pace": 77, "consistency": 78, "wet_weather": 75,
+     "overtaking": 73, "defence": 79, "development_potential": 45, "base_salary": 900_000},
+
+    {"name": "Marcus Ericsson", "nationality": "Swedish", "age": 34, "number": 9,
+     "skill": 74, "racecraft": 73, "pace": 74, "consistency": 75, "wet_weather": 72,
+     "overtaking": 70, "defence": 75, "development_potential": 40, "base_salary": 800_000},
+
+    {"name": "Jolyon Palmer", "nationality": "British", "age": 34, "number": 30,
+     "skill": 72, "racecraft": 70, "pace": 73, "consistency": 69, "wet_weather": 70,
+     "overtaking": 68, "defence": 70, "development_potential": 35, "base_salary": 750_000},
+
+    {"name": "Stoffel Vandoorne", "nationality": "Belgian", "age": 32, "number": 2,
+     "skill": 79, "racecraft": 77, "pace": 80, "consistency": 80, "wet_weather": 78,
+     "overtaking": 74, "defence": 78, "development_potential": 55, "base_salary": 1_000_000},
+
+    {"name": "Pascal Wehrlein", "nationality": "German", "age": 29, "number": 94,
+     "skill": 78, "racecraft": 77, "pace": 78, "consistency": 77, "wet_weather": 76,
+     "overtaking": 73, "defence": 76, "development_potential": 55, "base_salary": 900_000},
+
+    {"name": "Rio Haryanto", "nationality": "Indonesian", "age": 31, "number": 88,
+     "skill": 70, "racecraft": 69, "pace": 71, "consistency": 68, "wet_weather": 67,
+     "overtaking": 66, "defence": 68, "development_potential": 40, "base_salary": 700_000},
+
+    {"name": "Esteban Gutiérrez", "nationality": "Mexican", "age": 33, "number": 21,
+     "skill": 73, "racecraft": 71, "pace": 73, "consistency": 74, "wet_weather": 70,
+     "overtaking": 68, "defence": 73, "development_potential": 35, "base_salary": 800_000},
+
+    {"name": "Antonio Giovinazzi", "nationality": "Italian", "age": 30, "number": 99,
+     "skill": 77, "racecraft": 76, "pace": 78, "consistency": 76, "wet_weather": 74,
+     "overtaking": 72, "defence": 77, "development_potential": 55, "base_salary": 1_000_000},
+
+    {"name": "Brendon Hartley", "nationality": "New Zealander", "age": 34, "number": 28,
+     "skill": 76, "racecraft": 75, "pace": 77, "consistency": 74, "wet_weather": 75,
+     "overtaking": 72, "defence": 73, "development_potential": 40, "base_salary": 850_000},
+
+    {"name": "Sergey Sirotkin", "nationality": "Russian", "age": 29, "number": 35,
+     "skill": 74, "racecraft": 73, "pace": 75, "consistency": 74, "wet_weather": 72,
+     "overtaking": 70, "defence": 73, "development_potential": 45, "base_salary": 800_000},
+
+    # ── 2019–2022 era ────────────────────────────────────────────────────
+    {"name": "Nicholas Latifi", "nationality": "Canadian", "age": 29, "number": 6,
+     "skill": 70, "racecraft": 68, "pace": 70, "consistency": 71, "wet_weather": 69,
+     "overtaking": 65, "defence": 70, "development_potential": 50, "base_salary": 750_000},
+
+    {"name": "Mick Schumacher", "nationality": "German", "age": 25, "number": 47,
+     "skill": 79, "racecraft": 78, "pace": 80, "consistency": 77, "wet_weather": 80,
+     "overtaking": 76, "defence": 77, "development_potential": 85, "base_salary": 1_200_000},
+
+    {"name": "Nikita Mazepin", "nationality": "Russian", "age": 25, "number": 9,
+     "skill": 65, "racecraft": 62, "pace": 66, "consistency": 62, "wet_weather": 60,
+     "overtaking": 60, "defence": 63, "development_potential": 45, "base_salary": 600_000},
+
+
+    {"name": "Jack Aitken", "nationality": "British-Korean", "age": 29, "number": 89,
+     "skill": 68, "racecraft": 67, "pace": 69, "consistency": 67, "wet_weather": 66,
+     "overtaking": 64, "defence": 67, "development_potential": 55, "base_salary": 600_000},
+
+    {"name": "Pietro Fittipaldi", "nationality": "Brazilian", "age": 28, "number": 51,
+     "skill": 70, "racecraft": 69, "pace": 70, "consistency": 69, "wet_weather": 68,
+     "overtaking": 66, "defence": 69, "development_potential": 55, "base_salary": 650_000},
+
+    {"name": "Nyck de Vries", "nationality": "Dutch", "age": 29, "number": 21,
+     "skill": 76, "racecraft": 75, "pace": 77, "consistency": 76, "wet_weather": 75,
+     "overtaking": 72, "defence": 74, "development_potential": 65, "base_salary": 900_000},
+
+    # ── One-off / Substitutes ────────────────────────────────────────────
+    {"name": "Will Stevens", "nationality": "British", "age": 33, "number": 28,
+     "skill": 69, "racecraft": 68, "pace": 70, "consistency": 67, "wet_weather": 67,
+     "overtaking": 65, "defence": 67, "development_potential": 40, "base_salary": 600_000},
+
+    {"name": "Roberto Merhi", "nationality": "Spanish", "age": 33, "number": 98,
+     "skill": 68, "racecraft": 67, "pace": 69, "consistency": 66, "wet_weather": 65,
+     "overtaking": 63, "defence": 66, "development_potential": 35, "base_salary": 550_000},
+
+    # ── 2023–2025 Newcomers ──────────────────────────────────────────────
+    {"name": "Liam Lawson", "nationality": "New Zealander", "age": 22, "number": 30,
+     "skill": 82, "racecraft": 82, "pace": 84, "consistency": 80, "wet_weather": 81,
+     "overtaking": 83, "defence": 80, "development_potential": 92, "base_salary": 2_000_000},
+
+    {"name": "Oliver Bearman", "nationality": "British", "age": 19, "number": 87,
+     "skill": 80, "racecraft": 79, "pace": 82, "consistency": 78, "wet_weather": 79,
+     "overtaking": 80, "defence": 77, "development_potential": 95, "base_salary": 1_500_000},
+
+    {"name": "Franco Colapinto", "nationality": "Argentine", "age": 21, "number": 43,
+     "skill": 79, "racecraft": 79, "pace": 81, "consistency": 77, "wet_weather": 78,
+     "overtaking": 79, "defence": 76, "development_potential": 93, "base_salary": 1_200_000},
+
+    {"name": "Jack Doohan", "nationality": "Australian", "age": 22, "number": 7,
+     "skill": 78, "racecraft": 77, "pace": 79, "consistency": 77, "wet_weather": 76,
+     "overtaking": 76, "defence": 75, "development_potential": 90, "base_salary": 1_000_000},
+
+    {"name": "Gabriel Bortoleto", "nationality": "Brazilian", "age": 20, "number": 5,
+     "skill": 81, "racecraft": 80, "pace": 82, "consistency": 79, "wet_weather": 78,
+     "overtaking": 81, "defence": 77, "development_potential": 96, "base_salary": 1_500_000},
+
+    {"name": "Isack Hadjar", "nationality": "French-Algerian", "age": 20, "number": 6,
+     "skill": 80, "racecraft": 79, "pace": 81, "consistency": 78, "wet_weather": 77,
+     "overtaking": 80, "defence": 76, "development_potential": 95, "base_salary": 1_200_000},
+
+    {"name": "Kimi Antonelli", "nationality": "Italian", "age": 18, "number": 12,
+     "skill": 82, "racecraft": 80, "pace": 84, "consistency": 78, "wet_weather": 80,
+     "overtaking": 82, "defence": 77, "development_potential": 98, "base_salary": 2_000_000},
+
+    {"name": "Arvid Lindblad", "nationality": "British-Swedish", "age": 18, "number": 34,
+     "skill": 77, "racecraft": 76, "pace": 79, "consistency": 75, "wet_weather": 74,
+     "overtaking": 77, "defence": 73, "development_potential": 96, "base_salary": 900_000},
 ]
+
 
 FICTIONAL_DRIVERS = [
     # Young talents

@@ -28,6 +28,28 @@ logger = logging.getLogger(__name__)
 # ── Auto Migration (safe — IF NOT EXISTS) ───
 async def run_migrations():
     """Runs safe ALTER TABLE migrations on every startup. IF NOT EXISTS = no harm if already done."""
+    # PostgreSQL: ALTER TYPE ADD VALUE cannot run inside a transaction block.
+    # Must use AUTOCOMMIT isolation level in a raw connection.
+    staff_role_values = [
+        "team_principal", "technical_director", "chief_designer",
+        "head_of_aerodynamics", "aerodynamicist", "race_engineer",
+        "chief_race_engineer", "pit_crew_chief", "sporting_director",
+        "power_unit_director", "head_of_strategy", "performance_director",
+    ]
+    try:
+        async with engine.connect() as raw_conn:
+            await raw_conn.execution_options(isolation_level="AUTOCOMMIT")
+            for val in staff_role_values:
+                try:
+                    await raw_conn.execute(text(
+                        f"ALTER TYPE staffrole ADD VALUE IF NOT EXISTS '{val}'"
+                    ))
+                except Exception:
+                    pass  # value already exists or enum doesn't exist yet
+        logger.info("✅ staffrole enum values ensured")
+    except Exception as e:
+        logger.warning(f"staffrole enum migration warning: {e}")
+
     try:
         async with engine.begin() as conn:
             await conn.execute(text(
@@ -100,23 +122,6 @@ async def run_migrations():
                 """))
             except Exception as e:
                 logger.warning(f"races FK migration warning: {e}")
-            # Fix staffrole enum — add any missing values (safe, idempotent)
-            staff_role_values = [
-                "team_principal", "technical_director", "chief_designer",
-                "head_of_aerodynamics", "aerodynamicist", "race_engineer",
-                "chief_race_engineer", "pit_crew_chief", "sporting_director",
-                "power_unit_director", "head_of_strategy", "performance_director",
-            ]
-            for val in staff_role_values:
-                try:
-                    await conn.execute(text(f"""
-                        DO $$ BEGIN
-                            ALTER TYPE staffrole ADD VALUE IF NOT EXISTS '{val}';
-                        EXCEPTION WHEN others THEN NULL;
-                        END $$;
-                    """))
-                except Exception:
-                    pass
         logger.info("✅ Migrations applied successfully")
     except Exception as e:
         logger.warning(f"Migration warning (non-fatal): {e}")

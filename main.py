@@ -12,7 +12,8 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from src.core.config import settings
-from src.core.database.session import create_db_and_tables, engine
+from src.core.database.session import create_db_and_tables, engine, AsyncSessionLocal
+from src.services.game_services import seed_database
 from src.core.scheduler import setup_scheduler
 from src.bot.handlers import register_all_handlers
 from src.bot.middleware.auth import AuthMiddleware
@@ -144,6 +145,10 @@ async def run_bot():
     logger.info("Database initialized")
 
     await run_migrations()
+
+    async with AsyncSessionLocal() as session:
+        await seed_database(session)
+    logger.info("Database seeded")
 
     scheduler = await setup_scheduler(bot)
     dp["scheduler"] = scheduler

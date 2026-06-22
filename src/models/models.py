@@ -231,7 +231,7 @@ class Staff(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(64))
-    role: Mapped[StaffRole] = mapped_column(SAEnum(StaffRole))
+    role: Mapped[str] = mapped_column(String(64))
     nationality: Mapped[str] = mapped_column(String(32))
     skill: Mapped[int] = mapped_column(Integer, default=70)  # 1-100
     salary: Mapped[int] = mapped_column(BigInteger, default=2_000_000)

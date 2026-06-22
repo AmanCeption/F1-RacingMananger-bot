@@ -100,6 +100,23 @@ async def run_migrations():
                 """))
             except Exception as e:
                 logger.warning(f"races FK migration warning: {e}")
+            # Fix staffrole enum — add any missing values (safe, idempotent)
+            staff_role_values = [
+                "team_principal", "technical_director", "chief_designer",
+                "head_of_aerodynamics", "aerodynamicist", "race_engineer",
+                "chief_race_engineer", "pit_crew_chief", "sporting_director",
+                "power_unit_director", "head_of_strategy", "performance_director",
+            ]
+            for val in staff_role_values:
+                try:
+                    await conn.execute(text(f"""
+                        DO $$ BEGIN
+                            ALTER TYPE staffrole ADD VALUE IF NOT EXISTS '{val}';
+                        EXCEPTION WHEN others THEN NULL;
+                        END $$;
+                    """))
+                except Exception:
+                    pass
         logger.info("✅ Migrations applied successfully")
     except Exception as e:
         logger.warning(f"Migration warning (non-fatal): {e}")

@@ -1389,16 +1389,17 @@ class AdminService:
 # ─────────────────────────────────────────────
 
 async def seed_database(db: AsyncSession):
-    """Seed initial game data"""
-    # Check if already seeded
-    result = await db.execute(select(Driver).limit(1))
-    if result.scalar_one_or_none():
-        return
+    """Seed initial game data — upserts drivers by name so new additions always appear"""
+    logger.info("Seeding database (upsert mode)...")
 
-    logger.info("Seeding database...")
+    # ── Drivers: insert only if name not already in DB ──────────────────
+    existing_names_res = await db.execute(select(Driver.name))
+    existing_names = {row[0] for row in existing_names_res.fetchall()}
 
-    # Seed drivers
+    new_count = 0
     for d in REAL_DRIVERS + FICTIONAL_DRIVERS:
+        if d["name"] in existing_names:
+            continue  # already seeded, skip
         driver = Driver(
             name=d["name"],
             nationality=d["nationality"],
@@ -1416,21 +1417,28 @@ async def seed_database(db: AsyncSession):
             base_salary=d["base_salary"],
         )
         db.add(driver)
+        new_count += 1
 
-    # Seed staff
+    # ── Staff: insert only if name not already in DB ─────────────────────
+    existing_staff_res = await db.execute(select(Staff.name))
+    existing_staff = {row[0] for row in existing_staff_res.fetchall()}
     for s in STAFF_DATABASE:
-        staff = Staff(**s)
-        db.add(staff)
+        if s["name"] not in existing_staff:
+            db.add(Staff(**s))
 
-    # Seed sponsors
+    # ── Sponsors: insert only if name not already in DB ──────────────────
+    existing_sponsors_res = await db.execute(select(Sponsor.name))
+    existing_sponsors = {row[0] for row in existing_sponsors_res.fetchall()}
     for sp in SPONSORS:
-        sponsor = Sponsor(**sp)
-        db.add(sponsor)
+        if sp["name"] not in existing_sponsors:
+            db.add(Sponsor(**sp))
 
-    # Seed achievements
+    # ── Achievements: insert only if name not already in DB ──────────────
+    existing_ach_res = await db.execute(select(Achievement.name))
+    existing_ach = {row[0] for row in existing_ach_res.fetchall()}
     for a in ACHIEVEMENTS:
-        ach = Achievement(**a)
-        db.add(ach)
+        if a["name"] not in existing_ach:
+            db.add(Achievement(**a))
 
     await db.commit()
-    logger.info("Database seeded!")
+    logger.info(f"Database seed complete — {new_count} new drivers added.")

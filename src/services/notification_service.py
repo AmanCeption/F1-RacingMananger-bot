@@ -9,6 +9,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.session import get_session
+from src.services.circuit_images import get_circuit_image_url
 from src.models.models import (
     User, Team, League, Race, RaceStatus, LeagueStatus,
     TeamDriver, Driver, DriverTransfer, TransferStatus
@@ -28,6 +29,22 @@ async def safe_send(bot: Bot, user_id: int, text: str) -> bool:
         logger.debug(f"Bad request for user {user_id}: {e}")
     except Exception as e:
         logger.warning(f"Failed to notify user {user_id}: {e}")
+    return False
+
+
+async def safe_send_photo(bot: Bot, user_id: int, photo_url: str, caption: str) -> bool:
+    """Send a photo with caption safely. Falls back to text-only if photo fails."""
+    try:
+        await bot.send_photo(user_id, photo=photo_url, caption=caption, parse_mode="HTML")
+        return True
+    except TelegramForbiddenError:
+        logger.debug(f"User {user_id} has blocked the bot — skipping.")
+    except TelegramBadRequest as e:
+        logger.debug(f"Photo send failed for user {user_id}: {e} — falling back to text.")
+        return await safe_send(bot, user_id, caption)
+    except Exception as e:
+        logger.warning(f"Photo send failed for {user_id}: {e} — falling back to text.")
+        return await safe_send(bot, user_id, caption)
     return False
 
 
@@ -80,7 +97,8 @@ async def send_race_reminders(bot: Bot):
                     f"🔧 Check your car setup: /practice\n\n"
                     f"Good luck on track! 🏎️"
                 )
-                if await safe_send(bot, user.id, text):
+                image_url = await get_circuit_image_url(race.circuit_name or race.circuit)
+                if await safe_send_photo(bot, user.id, image_url, text):
                     sent += 1
 
     logger.info(f"Race reminders sent to {sent} players.")
@@ -234,7 +252,13 @@ async def send_race_results(bot: Bot, league_id: int, race_result: dict):
                 f"{insight_text}\n\n"
                 f"📊 Full standings: /standings"
             )
-            if await safe_send(bot, user.id, text):
+            if not hasattr(send_race_results, "_image_cache"):
+                send_race_results._image_cache = {}
+            race_name = race_result.get("race_name", "")
+            if race_name not in send_race_results._image_cache:
+                send_race_results._image_cache[race_name] = await get_circuit_image_url(race_name)
+            image_url = send_race_results._image_cache[race_name]
+            if await safe_send_photo(bot, user.id, image_url, text):
                 sent += 1
 
     logger.info(f"Race results sent to {sent} players in league {league_id}.")

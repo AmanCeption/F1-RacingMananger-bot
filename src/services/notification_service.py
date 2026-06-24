@@ -4,12 +4,14 @@ Handles: Race Reminders, Transfer Alerts, Daily Reward Reminders
 """
 import logging
 from aiogram import Bot
+from aiogram.types import BufferedInputFile
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database.session import get_session
 from src.services.circuit_images import get_circuit_image_url
+from src.services.standings_image import generate_race_standings_image
 from src.models.models import (
     User, Team, League, Race, RaceStatus, LeagueStatus,
     TeamDriver, Driver, DriverTransfer, TransferStatus
@@ -211,6 +213,23 @@ async def send_race_results(bot: Bot, league_id: int, race_result: dict):
 
     top5_text = "\n".join(lines) if lines else "  No results available."
 
+    # ── Generate standings image ONCE for the whole league ──────────────
+    standings_img_bytes: bytes | None = None
+    try:
+        standings_img_bytes = generate_race_standings_image(
+            race_name=race_result.get("race_name", "Race"),
+            circuit=race_result.get("circuit", ""),
+            weather_label=weather_label,
+            results=race_result.get("results", []),
+        )
+    except Exception as e:
+        logger.warning(f"Standings image generation failed: {e}")
+
+    standings_file = (
+        BufferedInputFile(standings_img_bytes, filename="standings.png")
+        if standings_img_bytes else None
+    )
+
     async with get_session() as db:
         teams_res = await db.execute(
             select(Team).where(Team.league_id == league_id)
@@ -244,22 +263,28 @@ async def send_race_results(bot: Bot, league_id: int, race_result: dict):
             if insight:
                 insight_text = f"\n\n💬 <i>{insight[:200]}</i>"
 
-            text = (
+            caption = (
                 f"🏁 <b>{race_result['race_name']}</b> — Finished!\n"
                 f"{weather_label} {race_result.get('circuit', '')}\n\n"
-                f"<b>Top 5:</b>\n{top5_text}"
+                f"<b>Race Results:</b>\n{top5_text}"
                 f"{personal}"
                 f"{insight_text}\n\n"
-                f"📊 Full standings: /standings"
+                f"📊 Season standings: /standings"
             )
-            if not hasattr(send_race_results, "_image_cache"):
-                send_race_results._image_cache = {}
-            race_name = race_result.get("race_name", "")
-            if race_name not in send_race_results._image_cache:
-                send_race_results._image_cache[race_name] = await get_circuit_image_url(race_name)
-            image_url = send_race_results._image_cache[race_name]
-            if await safe_send_photo(bot, user.id, image_url, text):
+
+            try:
+                if standings_file:
+                    # Re-wrap bytes each time (Telegram requires fresh file per send)
+                    file_to_send = BufferedInputFile(standings_img_bytes, filename="standings.png")
+                    await bot.send_photo(user.id, photo=file_to_send, caption=caption, parse_mode="HTML")
+                else:
+                    await safe_send(bot, user.id, caption)
                 sent += 1
+            except TelegramForbiddenError:
+                pass
+            except Exception as e:
+                logger.warning(f"Failed to send results to {user.id}: {e}")
+                await safe_send(bot, user.id, caption)
 
     logger.info(f"Race results sent to {sent} players in league {league_id}.")
 

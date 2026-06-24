@@ -545,18 +545,21 @@ async def cmd_qualifying(message: Message):
         grid_text += f"\n🚦 <b>Race starts next!</b> Use /runrace to begin."
         await message.answer(grid_text)
 
-    # Circuit map image after qualifying
+    # Circuit info card after qualifying
     try:
-        from src.services.circuit_images import get_circuit_image_url
-        circuit_url = await get_circuit_image_url(result.get("race_name", ""))
-        if circuit_url and "F1_logo" not in circuit_url:
-            await message.answer_photo(
-                circuit_url,
-                caption=f"🗺️ <b>{safe(result.get('race_name', ''))}</b> — Circuit Map",
-                parse_mode="HTML",
-            )
-    except Exception:
-        pass
+        from src.services.circuit_images import generate_circuit_card
+        from aiogram.types import BufferedInputFile
+        circ_bytes = generate_circuit_card(
+            race_name=result.get("race_name", ""),
+            weather=result.get("weather", ""),
+        )
+        await message.answer_photo(
+            BufferedInputFile(circ_bytes, filename="circuit.png"),
+            caption=f"🗺️ <b>{safe(result.get('circuit', ''))} {result.get('country','')}</b>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning(f"Circuit card failed: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -1779,18 +1782,21 @@ async def cmd_runrace(message: Message):
         text += "\n✅ Points & standings updated!"
         await message.answer(text)
 
-    # ── CIRCUIT IMAGE (bonus) ──────────────────────────────────────────
+    # ── CIRCUIT INFO CARD ─────────────────────────────────────────────
     try:
-        from src.services.circuit_images import get_circuit_image_url
-        circuit_url = await get_circuit_image_url(race_name)
-        if circuit_url and "F1_logo" not in circuit_url:
-            await message.answer_photo(
-                circuit_url,
-                caption=f"🗺️ <b>{safe(race_name)}</b> — Circuit Map",
-                parse_mode="HTML",
-            )
-    except Exception:
-        pass  # circuit image is optional
+        from src.services.circuit_images import generate_circuit_card
+        from aiogram.types import BufferedInputFile as BIF2
+        circ_bytes = generate_circuit_card(
+            race_name=race_name,
+            weather=weather_raw,
+        )
+        await message.answer_photo(
+            BIF2(circ_bytes, filename="circuit.png"),
+            caption=f"🗺️ <b>{safe(circuit)} {country}</b>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning(f"Circuit card failed: {e}")  # circuit image is optional
 
     # ── PRIVATE STAFF INSIGHTS ─────────────────────────────────────────
     staff_insights = result.get("staff_insights", {})

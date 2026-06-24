@@ -545,6 +545,19 @@ async def cmd_qualifying(message: Message):
         grid_text += f"\n🚦 <b>Race starts next!</b> Use /runrace to begin."
         await message.answer(grid_text)
 
+    # Circuit map image after qualifying
+    try:
+        from src.services.circuit_images import get_circuit_image_url
+        circuit_url = await get_circuit_image_url(result.get("race_name", ""))
+        if circuit_url and "F1_logo" not in circuit_url:
+            await message.answer_photo(
+                circuit_url,
+                caption=f"🗺️ <b>{safe(result.get('race_name', ''))}</b> — Circuit Map",
+                parse_mode="HTML",
+            )
+    except Exception:
+        pass
+
 
 # ─────────────────────────────────────────────
 # STANDINGS

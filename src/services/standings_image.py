@@ -74,10 +74,10 @@ def generate_race_standings_image(
     y += COL_H
     MEDALS = {1: (255, 215, 0), 2: (192, 192, 192), 3: (205, 127, 50)}
 
-    for r in results:
-        pos        = r.get("position", 0)
+    for idx, r in enumerate(results):
+        pos        = r.get("position") or 0   # None -> 0 for DNF
         is_dnf     = r.get("dnf", False)
-        row_color  = (22, 22, 38) if pos % 2 == 0 else (18, 18, 30)
+        row_color  = (22, 22, 38) if idx % 2 == 0 else (18, 18, 30)
         draw.rectangle([0, y - 4, W, y + ROW_H - 8], fill=row_color)
 
         # Left accent stripe for podium
@@ -85,7 +85,8 @@ def generate_race_standings_image(
             draw.rectangle([0, y - 4, 5, y + ROW_H - 8], fill=MEDALS[pos])
 
         pos_color = MEDALS.get(pos, (200, 200, 220))
-        draw.text((20, y + 10), str(pos), font=f_team, fill=pos_color)
+        pos_display = str(pos) if pos > 0 else "DNF"
+        draw.text((20, y + 10), pos_display, font=f_team, fill=pos_color)
 
         team_str = r.get("team", "")[:30]
         driver_str = r.get("driver", "")

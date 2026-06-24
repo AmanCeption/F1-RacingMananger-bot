@@ -1,4 +1,4 @@
-# 🏎️ F1 Management Bot
+# 🏎️ F1 Racing Manager Bot
 
 A fully-featured Telegram Formula 1 Management Simulator built with Python and Aiogram.
 

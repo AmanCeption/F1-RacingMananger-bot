@@ -706,6 +706,42 @@ class RaceService:
         if not entries:
             return None
 
+        # ── Fill with AI teams for qualifying if not enough entries ──────────
+        MIN_TEAMS = 6
+        human_team_names = [t.name for t in teams]
+        if len(entries) < MIN_TEAMS * 2:
+            from src.simulation.ai_teams import get_ai_teams_for_league, build_ai_car_stats, get_ai_strategy
+            import random
+            needed_teams = max(0, MIN_TEAMS - len(teams))
+            ai_slot_teams = get_ai_teams_for_league(needed_teams, exclude_names=human_team_names)
+            ai_id_start = -1000
+            for i, ai_t in enumerate(ai_slot_teams):
+                car_stats = build_ai_car_stats(ai_t)
+                for driver_key in ["driver", "driver2"]:
+                    d = ai_t[driver_key]
+                    ai_id = ai_id_start - (i * 2 + (0 if driver_key == "driver" else 1))
+                    entries.append(CarEntry(
+                        team_id=ai_id,
+                        team_name=f"{ai_t['name']} 🤖",
+                        driver_id=ai_id,
+                        driver_name=d["name"],
+                        pace=d["pace"],
+                        racecraft=d["racecraft"],
+                        consistency=d["consistency"],
+                        wet_weather=d["wet_weather"],
+                        overtaking=d["overtaking"],
+                        defence=d["defence"],
+                        engine=car_stats["engine"],
+                        aerodynamics=car_stats["aerodynamics"],
+                        chassis=car_stats["chassis"],
+                        reliability=car_stats["reliability"],
+                        tyre_mgmt=car_stats["tyre_mgmt"],
+                        pit_crew=car_stats["pit_crew"],
+                        staff_modifier=1.0,
+                        strategy=get_ai_strategy(ai_t),
+                        current_tyre="soft",
+                    ))
+
         import asyncio
         result = await asyncio.to_thread(simulate_qualifying, entries, weather, race.circuit)
 
@@ -840,6 +876,43 @@ class RaceService:
         if not entries:
             return None
 
+        # ── Fill with AI teams if fewer than MIN_TEAMS human teams ──────────
+        MIN_TEAMS = 6
+        human_team_names = [t.name for t in teams]
+        current_car_count = len(entries)
+        if current_car_count < MIN_TEAMS * 2:  # each team has 2 drivers
+            from src.simulation.ai_teams import get_ai_teams_for_league, build_ai_car_stats, get_ai_strategy
+            import random
+            needed_teams = max(0, MIN_TEAMS - len(teams))
+            ai_slot_teams = get_ai_teams_for_league(needed_teams, exclude_names=human_team_names)
+            ai_id_start = -1000  # negative IDs so they never clash with real DB IDs
+            for i, ai_t in enumerate(ai_slot_teams):
+                car_stats = build_ai_car_stats(ai_t)
+                for driver_key in ["driver", "driver2"]:
+                    d = ai_t[driver_key]
+                    ai_id = ai_id_start - (i * 2 + (0 if driver_key == "driver" else 1))
+                    entries.append(CarEntry(
+                        team_id=ai_id,
+                        team_name=f"{ai_t['name']} 🤖",
+                        driver_id=ai_id,
+                        driver_name=d["name"],
+                        pace=d["pace"],
+                        racecraft=d["racecraft"],
+                        consistency=d["consistency"],
+                        wet_weather=d["wet_weather"],
+                        overtaking=d["overtaking"],
+                        defence=d["defence"],
+                        engine=car_stats["engine"],
+                        aerodynamics=car_stats["aerodynamics"],
+                        chassis=car_stats["chassis"],
+                        reliability=car_stats["reliability"],
+                        tyre_mgmt=car_stats["tyre_mgmt"],
+                        pit_crew=car_stats["pit_crew"],
+                        staff_modifier=1.0,
+                        strategy=get_ai_strategy(ai_t),
+                        current_tyre=random.choice(["soft", "medium", "hard"]),
+                    ))
+
         # ── Respect qualifying grid order if it exists ──
         grid_result = await self.db.execute(
             select(QualifyingResult)
@@ -922,6 +995,10 @@ class RaceService:
     async def _save_race_results(self, race, teams: list, league_id: int, result: dict):
         """Save RaceResult rows, update team stats, update standings."""
         for car in result["results"]:
+            # Skip AI filler teams (negative IDs) — they don't exist in DB
+            if car.team_id < 0 or car.driver_id < 0:
+                continue
+
             points = F1_POINTS.get(car.position, 0) if not car.is_dnf else 0
 
             race_result = RaceResult(

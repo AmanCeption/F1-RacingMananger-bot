@@ -202,8 +202,42 @@ async def send_race_results(bot: Bot, league_id: int, race_result: dict):
     }
     weather_label = weather_emojis.get(race_result.get("weather", ""), "🌤️")
 
+    # ── Normalise results: CarEntry objects → dicts ──────────────────────
+    # race_engine returns CarEntry dataclass objects, not dicts
+    raw_results = race_result.get("results", [])
+    F1_POINTS = {1:25,2:18,3:15,4:12,5:10,6:8,7:6,8:4,9:2,10:1}
+
+    normalised = []
+    for r in raw_results:
+        if hasattr(r, "team_name"):  # CarEntry object
+            pos  = r.position
+            pts  = F1_POINTS.get(pos, 0) if not r.is_dnf else 0
+            normalised.append({
+                "position":    pos,
+                "team":        r.team_name,
+                "driver":      r.driver_name,
+                "points":      pts,
+                "total_points": 0,   # filled below from DB
+                "dnf":         r.is_dnf,
+                "dnf_reason":  r.dnf_reason,
+                "fastest_lap": r.has_fastest_lap,
+                "team_id":     r.team_id,
+            })
+        else:  # already a dict (future-proof)
+            normalised.append(r)
+
+    # ── Fetch total championship points from DB ──────────────────────────
+    async with get_session() as pts_db:
+        from src.models.models import ConstructorStanding
+        cs_res = await pts_db.execute(
+            select(ConstructorStanding).where(ConstructorStanding.league_id == league_id)
+        )
+        cs_rows = {row.team_id: row.points for row in cs_res.scalars().all()}
+    for r in normalised:
+        r["total_points"] = cs_rows.get(r.get("team_id"), r.get("points", 0))
+
     lines = []
-    for r in race_result.get("results", [])[:5]:
+    for r in normalised[:5]:
         if r["dnf"]:
             lines.append(f"  💥 DNF — {r['driver']} ({r['team']})")
         else:
@@ -220,10 +254,11 @@ async def send_race_results(bot: Bot, league_id: int, race_result: dict):
             race_name=race_result.get("race_name", "Race"),
             circuit=race_result.get("circuit", ""),
             weather_label=weather_label,
-            results=race_result.get("results", []),
+            results=normalised,
         )
+        logger.info(f"Standings image generated: {len(standings_img_bytes)} bytes")
     except Exception as e:
-        logger.warning(f"Standings image generation failed: {e}")
+        logger.warning(f"Standings image generation failed: {e}", exc_info=True)
 
     standings_file = (
         BufferedInputFile(standings_img_bytes, filename="standings.png")
@@ -243,12 +278,12 @@ async def send_race_results(bot: Bot, league_id: int, race_result: dict):
                 continue
 
             team_result = next(
-                (r for r in race_result.get("results", []) if r["team"] == team.name),
+                (r for r in normalised if r["team"] == team.name),
                 None,
             )
             if team_result:
                 if team_result["dnf"]:
-                    personal = f"\n\n🔧 <b>Your result:</b> DNF — {team_result['dnf_reason'] or 'mechanical failure'}"
+                    personal = f"\n\n🔧 <b>Your result:</b> DNF — {team_result.get('dnf_reason') or 'mechanical failure'}"
                 else:
                     personal = (
                         f"\n\n🏎️ <b>Your result:</b> P{team_result['position']} "

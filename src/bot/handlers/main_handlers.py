@@ -25,6 +25,15 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def _fmt_pole(pole: dict) -> str:
+    """Format pole lap time from grid entry."""
+    t = pole.get("q3") or pole.get("q2") or pole.get("q1")
+    if t is None:
+        return "—"
+    m, s = divmod(t, 60)
+    return f"{int(m)}:{s:06.3f}"
+
+
 def safe(text: str) -> str:
     """Escape HTML special chars"""
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -489,21 +498,51 @@ async def cmd_qualifying(message: Message):
             events_text = events_text[:3800] + "\n..."
         await message.answer(events_text)
 
-    # Final grid summary
-    grid_text = f"\n🏁 <b>STARTING GRID — {safe(result['race_name'])}</b>\n\n"
-    medals = ["🥇", "🥈", "🥉"]
-    for entry in result.get("grid", [])[:20]:
-        pos = entry["position"]
-        pos_str = medals[pos - 1] if pos <= 3 else f"P{pos:>2}"
-        best = entry.get("best_time")
-        time_str = ""
-        if best:
-            m, s = divmod(best, 60)
-            time_str = f"  {int(m)}:{s:06.3f}"
-        grid_text += f"{pos_str}  {safe(entry['driver'])} <i>({safe(entry['team'])})</i>{time_str}\n"
+    # Generate and send qualifying image card
+    try:
+        from src.services.qualifying_image import generate_qualifying_image
+        from aiogram.types import BufferedInputFile
 
-    grid_text += f"\n🚦 <b>Race starts next!</b> Use /runrace to begin."
-    await message.answer(grid_text)
+        weather_emojis = {
+            "sunny": "☀️", "cloudy": "🌥️", "light_rain": "🌧️",
+            "heavy_rain": "⛈️", "mixed": "🌦️",
+        }
+        weather_label = weather_emojis.get(result.get("weather", ""), "🌤️")
+        country = result.get("country", "")
+
+        img_bytes = generate_qualifying_image(
+            race_name=result.get("race_name", "Qualifying"),
+            circuit=f"{result.get('circuit', '')} {country}",
+            weather_label=weather_label,
+            grid=result.get("grid", []),
+        )
+        pole = result.get("grid", [{}])[0]
+        caption = (
+            f"🏁 <b>Qualifying Complete — {safe(result.get('race_name', ''))}</b>\n\n"
+            f"🥇 <b>Pole Position:</b> {safe(pole.get('driver', ''))} ({safe(pole.get('team', ''))})\n"
+            f"⏱ <b>Pole Time:</b> {_fmt_pole(pole)}\n\n"
+            f"🚦 Race starts next! Use /runrace to begin."
+        )
+        await message.answer_photo(
+            BufferedInputFile(img_bytes, filename="qualifying.png"),
+            caption=caption,
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        # Fallback to text if image generation fails
+        grid_text = f"\n🏁 <b>STARTING GRID — {safe(result['race_name'])}</b>\n\n"
+        medals = ["🥇", "🥈", "🥉"]
+        for entry in result.get("grid", [])[:20]:
+            pos = entry["position"]
+            pos_str = medals[pos - 1] if pos <= 3 else f"P{pos:>2}"
+            best = entry.get("best_time")
+            time_str = ""
+            if best:
+                m, s = divmod(best, 60)
+                time_str = f"  {int(m)}:{s:06.3f}"
+            grid_text += f"{pos_str}  {safe(entry['driver'])} <i>({safe(entry['team'])})</i>{time_str}\n"
+        grid_text += f"\n🚦 <b>Race starts next!</b> Use /runrace to begin."
+        await message.answer(grid_text)
 
 
 # ─────────────────────────────────────────────

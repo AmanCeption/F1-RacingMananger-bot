@@ -750,8 +750,10 @@ class RaceService:
             delete(QualifyingResult).where(QualifyingResult.race_id == race.id)
         )
 
-        # Save grid positions
+        # Save grid positions — skip AI filler cars (negative IDs, not in DB)
         for car in result["grid"]:
+            if car.team_id < 0 or car.driver_id < 0:
+                continue
             qt = result["q_times"].get(car.driver_id, {})
             qr = QualifyingResult(
                 race_id=race.id,

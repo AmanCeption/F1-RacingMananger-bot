@@ -2,6 +2,7 @@
 Bot Handlers - Registration, Team, Race, Standings
 """
 import logging
+import asyncio
 from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery
@@ -1601,58 +1602,200 @@ async def cmd_startseason(message: Message):
 
 @router.message(Command("runrace"))
 async def cmd_runrace(message: Message):
+    # ── Validation ──────────────────────────────────────────────────
     async with get_session() as db:
         team = await TeamService(db).get_by_owner(message.from_user.id)
         if not team or not team.league_id:
             await message.answer("❌ You are not in any league!")
             return
 
-        from src.models.models import League, LeagueStatus as LS
-        from sqlalchemy import select as sa_select
-        result = await db.execute(sa_select(League).where(League.id == team.league_id))
-        league = result.scalar_one_or_none()
+        from src.models.models import League, LeagueStatus as LS, Race, RaceStatus
+        from sqlalchemy import select as sa_select, and_ as sa_and
+        league_res = await db.execute(sa_select(League).where(League.id == team.league_id))
+        league = league_res.scalar_one_or_none()
         if not league or league.owner_id != message.from_user.id:
             await message.answer("❌ Only the league owner can run races!")
             return
 
-        await message.answer("🏁 Simulating race... please wait.")
+        # Get next race info for announcement
+        race_res = await db.execute(
+            sa_select(Race).where(
+                sa_and(Race.league_id == team.league_id, Race.status == RaceStatus.SCHEDULED)
+            ).order_by(Race.round.asc()).limit(1)
+        )
+        next_race = race_res.scalar_one_or_none()
+        if not next_race:
+            await message.answer("❌ No scheduled race found! Season may be finished.")
+            return
+
+        # Announce race start
+        weather_emoji = {
+            "sunny": "☀️", "cloudy": "🌥️", "light_rain": "🌧️",
+            "heavy_rain": "⛈️", "mixed": "🌦️"
+        }
+        await message.answer(
+            f"🏎️ <b>ROUND {next_race.round} — {next_race.name.upper()}</b>\n"
+            f"🏟️ {next_race.circuit} {next_race.country}\n"
+            f"🔢 {next_race.laps} Laps\n\n"
+            f"🚦 <b>Race begins in 5 seconds...</b>"
+        )
+        await asyncio.sleep(5)
+
+        # Run simulation
         result = await RaceService(db).run_race(team.league_id)
         await db.commit()
 
     if not result:
-        await message.answer("❌ No race to run! All races finished, or season not started.")
+        await message.answer("❌ Race simulation failed or no race to run!")
         return
 
-    weather_emoji = {
-        "sunny": "☀️", "cloudy": "🌥️", "light_rain": "🌧️",
-        "heavy_rain": "⛈️", "mixed": "🌦️"
-    }
-    w = result.get("weather", "sunny")
-    text = (
-        f"🏁 <b>{safe(result['race_name'])}</b>\n"
-        f"🏎️ {safe(result.get('circuit', ''))} {result.get('country', '')}\n"
-        f"{weather_emoji.get(w, '🌤️')} Weather: {w.replace('_', ' ').title()}\n\n"
-        f"<b>Race Results:</b>\n"
+    raw_events   = result.get("events", [])
+    results_list = result.get("results", [])
+    race_name    = result.get("race_name", "")
+    circuit      = result.get("circuit", "")
+    country      = result.get("country", "")
+    weather_raw  = result.get("weather", "sunny")
+    weather_label = weather_emoji.get(weather_raw, "🌤️")
+
+    # ── Build live commentary chunks (reuse admin engine) ─────────────
+    from src.bot.handlers.admin_handlers import build_commentary
+    commentary_chunks = build_commentary(raw_events, results_list)
+
+    # ── LIVE BROADCAST — 40s to 90s total ─────────────────────────────
+    # Opening shot
+    await message.answer(
+        f"🔴 <b>LIGHTS OUT AND AWAY WE GO!</b>\n\n"
+        f"🏁 <b>{safe(race_name)}</b> — {safe(circuit)} {country}\n"
+        f"{weather_label} Weather: {weather_raw.replace('_', ' ').title()}\n\n"
+        + (commentary_chunks[0] if commentary_chunks else "🚦 The race is underway!")
     )
 
-    medals = ["🥇", "🥈", "🥉"]
-    for entry in result.get("results", [])[:20]:
-        pos = entry.get("position")
-        if entry.get("dnf"):
-            pos_str = "💥"
-        elif pos and pos <= 3:
-            pos_str = medals[pos - 1]
-        elif pos:
-            pos_str = f"{pos}."
-        else:
-            pos_str = "💥"
+    if len(commentary_chunks) > 1:
+        # Spread remaining chunks across 40-80 seconds
+        broadcast_time = 75  # seconds
+        delay = max(4, min(12, broadcast_time // max(len(commentary_chunks) - 1, 1)))
 
-        fl = " ⚡" if entry.get("fastest_lap") else ""
-        dnf_reason = f" ({safe(entry['dnf_reason'])})" if entry.get("dnf") and entry.get("dnf_reason") else ""
-        pts = f" — {entry['points']} pts" if entry.get("points", 0) > 0 else ""
-        text += f"{pos_str} {safe(entry['driver'])} <i>({safe(entry['team'])})</i>{fl}{dnf_reason}{pts}\n"
+        for chunk in commentary_chunks[1:]:
+            await asyncio.sleep(delay)
+            is_drama = any(kw in chunk for kw in
+                ["SAFETY CAR", "RED FLAG", "RETIREMENT", "overtakes",
+                 "VSC", "5 LAPS", "INCIDENT", "CRASH"])
+            prefix = "🚨 <b>INCIDENT</b>" if is_drama else "📡 <b>LIVE</b>"
+            await message.answer(f"{prefix}\n\n{chunk}")
+    else:
+        await asyncio.sleep(40)  # minimum race duration even if no events
 
-    await message.answer(text)
+    # Chequered flag
+    await asyncio.sleep(6)
+    await message.answer("🏁 <b>CHEQUERED FLAG!</b>\n\nFinal results incoming...")
+    await asyncio.sleep(3)
+
+    # ── RACE RESULT IMAGE ──────────────────────────────────────────────
+    try:
+        from src.services.standings_image import generate_race_standings_image
+        from aiogram.types import BufferedInputFile
+
+        img_bytes = generate_race_standings_image(
+            race_name=race_name,
+            circuit=f"{circuit} {country}",
+            weather_label=weather_label,
+            results=results_list,
+        )
+
+        # Build podium caption
+        medals = ["🥇", "🥈", "🥉"]
+        podium_lines = []
+        for idx, car in enumerate(results_list[:3]):
+            if not car.get("dnf"):
+                winner_tag = " ✨ WINNER" if idx == 0 else ""
+                podium_lines.append(
+                    f"{medals[idx]} <b>{safe(car['driver'])}</b> ({safe(car['team'])}){winner_tag}"
+                )
+
+        dnf_cars = [c for c in results_list if c.get("dnf")]
+        dnf_text = ""
+        if dnf_cars:
+            dnf_text = "\n\n💥 <b>Retirements:</b> " + ", ".join(
+                f"{c['driver']} ({c.get('dnf_reason', 'DNF')})" for c in dnf_cars
+            )
+
+        fl_text = ""
+        for car in results_list:
+            if car.get("fastest_lap"):
+                fl_text = f"\n⚡ <b>Fastest Lap:</b> {safe(car['driver'])} 💜"
+                break
+
+        caption = (
+            f"🏆 <b>RACE RESULT — {safe(race_name)}</b>\n\n"
+            + "\n".join(podium_lines)
+            + dnf_text
+            + fl_text
+            + "\n\n✅ Points & standings updated!"
+        )
+
+        await message.answer_photo(
+            BufferedInputFile(img_bytes, filename="race_result.png"),
+            caption=caption,
+            parse_mode="HTML",
+        )
+
+    except Exception as e:
+        logger.warning(f"Race result image failed: {e}")
+        # Fallback to text result
+        medals = ["🥇", "🥈", "🥉"]
+        text = (
+            f"🏆 <b>RACE RESULT — {safe(race_name)}</b>\n"
+            f"🏟️ {safe(circuit)} {country}\n"
+            f"{weather_label} {weather_raw.replace('_', ' ').title()}\n\n"
+            f"<b>Results:</b>\n"
+        )
+        for entry in results_list[:20]:
+            pos = entry.get("position")
+            if entry.get("dnf"):
+                pos_str = "💥"
+            elif pos and pos <= 3:
+                pos_str = medals[pos - 1]
+            elif pos:
+                pos_str = f"P{pos}."
+            else:
+                pos_str = "💥"
+            fl = " ⚡" if entry.get("fastest_lap") else ""
+            dnf_reason = f" ({safe(entry['dnf_reason'])})" if entry.get("dnf") and entry.get("dnf_reason") else ""
+            pts = f" — {entry['points']} pts" if entry.get("points", 0) > 0 else ""
+            text += f"{pos_str} {safe(entry['driver'])} <i>({safe(entry['team'])})</i>{fl}{dnf_reason}{pts}\n"
+        text += "\n✅ Points & standings updated!"
+        await message.answer(text)
+
+    # ── CIRCUIT IMAGE (bonus) ──────────────────────────────────────────
+    try:
+        from src.services.circuit_images import get_circuit_image_url
+        circuit_url = await get_circuit_image_url(race_name)
+        if circuit_url and "F1_logo" not in circuit_url:
+            await message.answer_photo(
+                circuit_url,
+                caption=f"🗺️ <b>{safe(race_name)}</b> — Circuit Map",
+                parse_mode="HTML",
+            )
+    except Exception:
+        pass  # circuit image is optional
+
+    # ── PRIVATE STAFF INSIGHTS ─────────────────────────────────────────
+    staff_insights = result.get("staff_insights", {})
+    if staff_insights:
+        from sqlalchemy import select as sa_select2
+        from src.models.models import Team as TeamModel
+        async with get_session() as db2:
+            teams_res = await db2.execute(
+                sa_select2(TeamModel).where(TeamModel.league_id == team.league_id)
+            )
+            all_league_teams = teams_res.scalars().all()
+        for t in all_league_teams:
+            insight_text = staff_insights.get(t.id)
+            if insight_text and t.owner_id:
+                try:
+                    await message.bot.send_message(t.owner_id, insight_text, parse_mode="HTML")
+                except Exception:
+                    pass
 
 
 # ─────────────────────────────────────────────

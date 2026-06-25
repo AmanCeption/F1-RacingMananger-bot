@@ -1303,12 +1303,57 @@ class RaceService:
             if champion_driver:
                 season.champion_driver_id = champion_driver.driver_id
 
-        # Award champion team
+        # Award champion team + collect announcement data
+        season_summary = {
+            "season": league.current_season,
+            "league_name": league.name,
+            "constructor_champion_team_id": None,
+            "constructor_champion_name": None,
+            "constructor_champion_points": None,
+            "driver_champion_driver_id": None,
+            "driver_champion_name": None,
+            "driver_champion_points": None,
+            "driver_champion_team_name": None,
+        }
+
         if champion_team:
             team = await TeamService(self.db).get(champion_team.team_id)
             if team:
                 team.budget += 100_000_000  # Championship prize
                 team.reputation = min(100, team.reputation + 20)
+                team.wins += 0  # already tracked per race
+                season_summary["constructor_champion_team_id"] = team.id
+                season_summary["constructor_champion_name"] = team.name
+                season_summary["constructor_champion_points"] = champion_team.points
+                # Award achievement if applicable (best effort)
+                try:
+                    from src.models.models import Achievement, TeamAchievement
+                    ach_res = await self.db.execute(
+                        select(Achievement).where(Achievement.key == "constructor_champion")
+                    )
+                    ach = ach_res.scalar_one_or_none()
+                    if ach:
+                        ta = TeamAchievement(team_id=team.id, achievement_id=ach.id)
+                        self.db.add(ta)
+                except Exception:
+                    pass
+
+        if champion_driver:
+            from src.models.models import Driver as DriverModel
+            drv_res = await self.db.execute(
+                select(DriverModel).where(DriverModel.id == champion_driver.driver_id)
+            )
+            drv = drv_res.scalar_one_or_none()
+            champ_team = await TeamService(self.db).get(champion_driver.team_id) if champion_driver.team_id else None
+            if drv:
+                drv.career_wins = getattr(drv, "career_wins", 0)  # already tracked
+                season_summary["driver_champion_driver_id"] = drv.id
+                season_summary["driver_champion_name"] = drv.name
+                season_summary["driver_champion_points"] = champion_driver.points
+                season_summary["driver_champion_team_name"] = champ_team.name if champ_team else "Unknown"
+
+        # Store summary on league object for notification service to pick up
+        league._season_summary = season_summary  # transient attr for this session
 
         # Start new season
         league.current_season += 1

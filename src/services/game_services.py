@@ -590,7 +590,7 @@ class RaceService:
         result = await self.db.execute(
             select(Race).where(
                 and_(Race.league_id == league_id,
-                     Race.status.in_([RaceStatus.SCHEDULED, RaceStatus.QUALIFYING]))
+                     Race.status.in_([RaceStatus.SCHEDULED, RaceStatus.QUALIFYING, RaceStatus.RACING]))
             ).order_by(Race.round.asc()).limit(1)
         )
         return result.scalar_one_or_none()
@@ -802,10 +802,22 @@ class RaceService:
         if not race:
             return None
 
-        race.status = RaceStatus.RACING
-        race.started_at = datetime.utcnow()
-        weather = generate_weather()
-        race.weather = weather.value
+        # If already RACING (stuck from a previous attempt), just re-run it
+        if race.status != RaceStatus.RACING:
+            race.status = RaceStatus.RACING
+            race.started_at = datetime.utcnow()
+        # Reuse qualifying weather if already set, else generate fresh
+        if race.weather:
+            weather = generate_weather().__class__(race.weather)  # reconstruct enum
+            try:
+                from src.simulation.race_engine import Weather as RaceWeather
+                weather = RaceWeather(race.weather)
+            except Exception:
+                weather = generate_weather()
+                race.weather = weather.value
+        else:
+            weather = generate_weather()
+            race.weather = weather.value
         await self.db.flush()
 
         # Build car entries

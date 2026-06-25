@@ -1618,22 +1618,27 @@ async def cmd_startseason(message: Message):
 
 @router.message(Command("runrace"))
 async def cmd_runrace(message: Message):
-    # ── Validation ──────────────────────────────────────────────────
+    # ── Validation (own short-lived session) ────────────────────────
+    from src.models.models import League, LeagueStatus as LS, Race, RaceStatus
+    from sqlalchemy import select as sa_select, and_ as sa_and
+
+    weather_emoji = {
+        "sunny": "☀️", "cloudy": "🌥️", "light_rain": "🌧️",
+        "heavy_rain": "⛈️", "mixed": "🌦️"
+    }
+
     async with get_session() as db:
         team = await TeamService(db).get_by_owner(message.from_user.id)
         if not team or not team.league_id:
             await message.answer("❌ You are not in any league!")
             return
 
-        from src.models.models import League, LeagueStatus as LS, Race, RaceStatus
-        from sqlalchemy import select as sa_select, and_ as sa_and
         league_res = await db.execute(sa_select(League).where(League.id == team.league_id))
         league = league_res.scalar_one_or_none()
         if not league or league.owner_id != message.from_user.id:
             await message.answer("❌ Only the league owner can run races!")
             return
 
-        # Get next race info for announcement
         race_res = await db.execute(
             sa_select(Race).where(
                 sa_and(Race.league_id == team.league_id, Race.status == RaceStatus.SCHEDULED)
@@ -1644,22 +1649,29 @@ async def cmd_runrace(message: Message):
             await message.answer("❌ No scheduled race found! Season may be finished.")
             return
 
-        # Announce race start
-        weather_emoji = {
-            "sunny": "☀️", "cloudy": "🌥️", "light_rain": "🌧️",
-            "heavy_rain": "⛈️", "mixed": "🌦️"
-        }
-        await message.answer(
+        league_id = team.league_id
+        # Capture values before session closes
+        announce_text = (
             f"🏎️ <b>ROUND {next_race.round} — {next_race.name.upper()}</b>\n"
             f"🏟️ {next_race.circuit} {next_race.country}\n"
             f"🔢 {next_race.laps} Laps\n\n"
             f"🚦 <b>Race begins in 5 seconds...</b>"
         )
-        await asyncio.sleep(5)
 
-        # Run simulation
-        result = await RaceService(db).run_race(team.league_id)
-        await db.commit()
+    # ── Announce (outside session — no DB connection held during sleep) ──
+    await message.answer(announce_text)
+    await asyncio.sleep(5)
+
+    # ── Run simulation in a fresh session ───────────────────────────
+    result = None
+    try:
+        async with get_session() as db:
+            result = await RaceService(db).run_race(league_id)
+            await db.commit()
+    except Exception as e:
+        logger.error(f"run_race failed: {e}", exc_info=True)
+        await message.answer(f"❌ Race simulation error: {e}")
+        return
 
     if not result:
         await message.answer("❌ Race simulation failed or no race to run!")

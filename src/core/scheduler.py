@@ -28,7 +28,7 @@ async def auto_run_races(bot: Bot):
         for league in leagues:
             try:
                 svc = RaceService(db)
-                race_result = await svc.run_race(league.id)
+                race_result = await svc.run_race(league.id, bot=bot)
                 if race_result:
                     logger.info(f"Race completed for league {league.id}: {race_result['race_name']}")
                     await send_race_results(bot, league.id, race_result)

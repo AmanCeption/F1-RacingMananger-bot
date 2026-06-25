@@ -510,15 +510,40 @@ async def cmd_forcerace(message: Message):
 async def cmd_broadcast(message: Message):
     if not is_admin(message.from_user.id):
         return
+    # Usage: /broadcast <message>
+    # Supports full Telegram HTML: <b>, <i>, <code>, <a href="">, emoji, newlines
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "Usage: /broadcast &lt;message&gt;\n\n"
-            "Example: /broadcast Server maintenance at 10PM tonight!"
+            "📡 <b>Broadcast Help</b>\n\n"
+            "<b>Usage:</b> /broadcast &lt;message&gt;\n\n"
+            "<b>Supports rich HTML:</b>\n"
+            "  <code>&lt;b&gt;bold&lt;/b&gt;</code> → <b>bold</b>\n"
+            "  <code>&lt;i&gt;italic&lt;/i&gt;</code> → <i>italic</i>\n"
+            "  <code>&lt;code&gt;mono&lt;/code&gt;</code> → <code>mono</code>\n"
+            "  Emoji ✅🏎️🔔 work natively\n\n"
+            "<b>Examples:</b>\n"
+            "  /broadcast 🔔 Server maintenance at 10PM tonight!\n"
+            "  /broadcast &lt;b&gt;Season 2 starts Sunday!&lt;/b&gt; 🏁\n  Race at 14:00 UTC.",
+            parse_mode="HTML"
         )
         return
 
     broadcast_text = parts[1]
+
+    # ── Preview to admin before sending ──────────────────────────────────
+    preview_header = (
+        f"📢 <b>Announcement from F1 Bot</b>\n"
+        f"{'─' * 30}\n\n"
+        f"{broadcast_text}\n\n"
+        f"<i>— F1 Management Bot Team</i>"
+    )
+    await message.answer(
+        f"<b>👁️ Broadcast Preview:</b>\n{'─'*28}\n\n"
+        + preview_header +
+        f"\n\n{'─'*28}\n<i>Sending to all users now...</i>",
+        parse_mode="HTML"
+    )
 
     # Fetch all user IDs from DB
     async with get_session() as db:
@@ -537,13 +562,8 @@ async def cmd_broadcast(message: Message):
         f"⏳ Please wait..."
     )
 
-    # Full formatted broadcast message
-    full_text = (
-        f"📢 <b>Announcement from F1 Bot</b>\n"
-        f"{'─' * 30}\n\n"
-        f"{broadcast_text}\n\n"
-        f"<i>— F1 Management Bot Team</i>"
-    )
+    # Full formatted broadcast message (HTML-rendered)
+    full_text = preview_header
 
     for user_id in user_ids:
         try:
@@ -560,4 +580,3 @@ async def cmd_broadcast(message: Message):
         f"❌ Failed: <b>{failed}</b> (blocked/deleted bot)\n"
         f"👥 Total: <b>{total}</b>"
     )
-    

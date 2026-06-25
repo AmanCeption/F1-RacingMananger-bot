@@ -354,18 +354,37 @@ async def cmd_strategy(message: Message):
             await message.answer("❌ You need at least one driver to set a strategy!")
             return
 
-        text = (
+        driver = data["drivers"][0]["driver"]
+        caption = (
             f"🏁 <b>Next Race: {race.name} {race.country}</b>\n"
             f"🏎️ Circuit: {race.circuit}\n"
             f"🔄 Laps: {race.laps}\n\n"
             f"📋 <b>Set Race Strategy</b>\n\n"
             f"Choose strategy for your #1 driver:"
         )
-        driver = data["drivers"][0]["driver"]
-        await message.answer(
-            text,
-            reply_markup=strategy_kb(race.id, driver.id)
-        )
+
+        # Try sending circuit card as photo with strategy buttons as caption
+        try:
+            from src.services.circuit_images import generate_circuit_card
+            from aiogram.types import BufferedInputFile
+            circ_bytes = generate_circuit_card(
+                race_name=race.name,
+                round_num=race.round,
+                weather=race.weather or "",
+            )
+            await message.answer_photo(
+                BufferedInputFile(circ_bytes, filename="circuit.png"),
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=strategy_kb(race.id, driver.id),
+            )
+        except Exception as e:
+            logger.warning(f"Circuit card in strategy failed: {e}")
+            # Fallback: text only
+            await message.answer(
+                caption,
+                reply_markup=strategy_kb(race.id, driver.id)
+            )
 
 
 @router.callback_query(F.data.startswith("strategy:set:"))
@@ -379,10 +398,21 @@ async def set_strategy(callback: CallbackQuery):
             await callback.answer("❌ Register first!")
             return
 
-        await callback.message.edit_text(
-            f"✅ Strategy: <b>{strategy.upper()}</b>\n\nNow choose starting tyre:",
-            reply_markup=tyre_selection_kb(race_id, driver_id, strategy)
-        )
+        new_text = f"✅ Strategy: <b>{strategy.upper()}</b>\n\nNow choose starting tyre:"
+        try:
+            if callback.message.photo:
+                await callback.message.edit_caption(
+                    caption=new_text,
+                    parse_mode="HTML",
+                    reply_markup=tyre_selection_kb(race_id, driver_id, strategy)
+                )
+            else:
+                await callback.message.edit_text(
+                    new_text,
+                    reply_markup=tyre_selection_kb(race_id, driver_id, strategy)
+                )
+        except Exception:
+            await callback.message.answer(new_text, reply_markup=tyre_selection_kb(race_id, driver_id, strategy))
         await callback.answer()
 
 
@@ -398,15 +428,19 @@ async def set_tyre(callback: CallbackQuery):
             return
 
         success, msg = await RaceService(db).set_strategy(team.id, driver_id, race_id, strategy, tyre)
-        if success:
-            await callback.message.edit_text(
-                f"✅ <b>Race Strategy Saved!</b>\n\n"
-                f"Strategy: <b>{strategy.upper()}</b>\n"
-                f"Starting Tyre: <b>{tyre.title()}</b>\n\n"
-                f"Good luck on race day! 🏁"
-            )
-        else:
-            await callback.message.edit_text(f"❌ {msg}")
+        saved_text = (
+            f"✅ <b>Race Strategy Saved!</b>\n\n"
+            f"Strategy: <b>{strategy.upper()}</b>\n"
+            f"Starting Tyre: <b>{tyre.title()}</b>\n\n"
+            f"Good luck on race day! 🏁"
+        ) if success else f"❌ {msg}"
+        try:
+            if callback.message.photo:
+                await callback.message.edit_caption(caption=saved_text, parse_mode="HTML")
+            else:
+                await callback.message.edit_text(saved_text)
+        except Exception:
+            await callback.message.answer(saved_text)
         await callback.answer()
 
 

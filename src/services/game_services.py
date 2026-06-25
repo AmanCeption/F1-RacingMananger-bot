@@ -1034,7 +1034,7 @@ class RaceService:
         # Sprint race flag from calendar
         is_sprint_round = race_calendar_entry.get("sprint", False) if (
             race_calendar_entry := next(
-                (r for r in settings.F1_CALENDAR if r["name"] == race.name), {}
+                (r for r in F1_CALENDAR if r["name"] == race.name), {}
             )
         ) else False
 
@@ -1226,7 +1226,7 @@ class RaceService:
             ach_result = await self.db.execute(
                 select(Achievement).where(Achievement.key == key)
             )
-            ach = ach_result.scalar_one_or_none()
+            ach = ach_result.scalars().first()  # safe even if duplicates exist
             if not ach:
                 return
 
@@ -1607,11 +1607,11 @@ async def seed_database(db: AsyncSession):
         if sp["name"] not in existing_sponsors:
             db.add(Sponsor(**sp))
 
-    # ── Achievements: insert only if name not already in DB ──────────────
-    existing_ach_res = await db.execute(select(Achievement.name))
+    # ── Achievements: insert only if key not already in DB ───────────────
+    existing_ach_res = await db.execute(select(Achievement.key))
     existing_ach = {row[0] for row in existing_ach_res.fetchall()}
     for a in ACHIEVEMENTS:
-        if a["name"] not in existing_ach:
+        if a["key"] not in existing_ach:
             db.add(Achievement(**a))
 
     await db.commit()

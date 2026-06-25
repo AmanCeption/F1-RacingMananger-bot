@@ -239,6 +239,187 @@ def simulate_overtake(attacker: CarEntry, defender: CarEntry, weather: Weather, 
     return total_attack > total_defend
 
 
+def simulate_formation_lap(
+    entries: list[CarEntry],
+    weather: Weather,
+    dna: dict,
+) -> list[str]:
+    """
+    Simulate the formation lap: tyre heat, brake warm-up, rain-start calls.
+    May cause a false start penalty or VSC before lights out.
+    """
+    events = ["🔄 <b>Formation Lap</b>"]
+    is_wet = weather in [Weather.LIGHT_RAIN, Weather.HEAVY_RAIN, Weather.MIXED]
+
+    # Tyre warm-up notes per compound
+    for car in entries:
+        compound = car.current_tyre
+        if compound == "soft":
+            car._tyre_warmup_bonus = random.uniform(0.05, 0.15)   # softs heat fast
+        elif compound == "medium":
+            car._tyre_warmup_bonus = random.uniform(0.0, 0.08)
+        elif compound == "hard":
+            car._tyre_warmup_bonus = random.uniform(-0.05, 0.04)  # hard cold on L1
+        elif compound in ["intermediate", "wet"]:
+            car._tyre_warmup_bonus = random.uniform(0.0, 0.06)
+        else:
+            car._tyre_warmup_bonus = 0.0
+
+    # Wet-start compound swap chance
+    if weather == Weather.HEAVY_RAIN:
+        events.append("⛈️ Heavy rain — all cars switching to full wet tyres on the grid")
+        for car in entries:
+            car.current_tyre = "wet"
+    elif weather == Weather.LIGHT_RAIN:
+        events.append("🌧️ Light rain — most teams calling for intermediates at the start")
+        for car in entries:
+            if car.tyre_mgmt >= 60 or random.random() < 0.7:
+                car.current_tyre = "intermediate"
+
+    # Random formation lap incident
+    incident = random.random()
+    if incident < 0.06:
+        victim = random.choice(entries)
+        events.append(
+            f"⚠️ {victim.driver_name} stalls briefly on formation lap — rejoins at the back!"
+        )
+        victim._start_penalty = random.randint(3, 6)   # position penalty on standing start
+    elif incident < 0.09:
+        events.append("🚗 Slow formation lap — grid temperature concerns for tyre warm-up")
+    else:
+        events.append("✅ Clean formation lap — all cars in position")
+
+    events.append("🚦🚦🚦🚦🚦 Five lights on...")
+    events.append("🚦🚦🚦🚦⬛ Four lights...")
+    events.append("🚦🚦🚦⬛⬛ Three lights...")
+    events.append("🚦🚦⬛⬛⬛ Two lights...")
+    events.append("🚦⬛⬛⬛⬛ One light...")
+    events.append("⬛⬛⬛⬛⬛ <b>LIGHTS OUT!</b> 🏎️💨")
+
+    return events
+
+
+def simulate_race_start(
+    entries: list[CarEntry],
+    weather: Weather,
+    dna: dict,
+    race_name: str = "",
+) -> list[str]:
+    """
+    Simulate the race start and opening 2 laps:
+    reaction times, wheelspin on softs, position changes, first-lap incidents.
+    """
+    events = ["⚡ <b>Race Start & Opening Laps</b>"]
+    is_wet = weather in [Weather.LIGHT_RAIN, Weather.HEAVY_RAIN, Weather.MIXED]
+    overtaking_mod = dna.get("overtaking_mod", 1.0)
+    tyre_stress = dna.get("tyre_stress", 1.0)
+
+    # ── Reaction times ────────────────────────────────────────────────────
+    # Based on racecraft + consistency; wet conditions add variance
+    reaction_scores = {}
+    for car in entries:
+        base = (car.racecraft * 0.5 + car.consistency * 0.3 + car.pace * 0.2) / 100
+        wet_penalty = random.uniform(0.05, 0.20) if is_wet else 0.0
+        noise = random.gauss(0, 0.04)
+        reaction = max(0.01, base + noise - wet_penalty)
+        # Apply formation-lap stall penalty
+        penalty = getattr(car, "_start_penalty", 0)
+        if penalty:
+            reaction -= 0.3
+        reaction_scores[car.team_id] = reaction
+
+    # Sort by reaction to get L1 starting order
+    sorted_by_reaction = sorted(entries, key=lambda c: -reaction_scores[c.team_id])
+
+    # ── Wheelspin on softs ────────────────────────────────────────────────
+    wheelspin_victims = []
+    for car in sorted_by_reaction[:6]:    # front runners most affected
+        spins = False
+        if car.current_tyre == "soft" and car.tyre_mgmt < 65:
+            spins = random.random() < 0.35
+        elif car.current_tyre == "soft" and is_wet:
+            spins = random.random() < 0.55
+        elif is_wet and car.wet_weather < 55:
+            spins = random.random() < 0.30
+        if spins:
+            wheelspin_victims.append(car)
+            car._wheelspin_loss = random.randint(1, 3)   # positions lost
+            events.append(
+                f"💨 {car.driver_name} — wheelspin off the line! "
+                f"Loses {car._wheelspin_loss} position{'s' if car._wheelspin_loss > 1 else ''}!"
+            )
+
+    # ── Position changes on lap 1 ─────────────────────────────────────────
+    position_changes = []
+    for i, car in enumerate(sorted_by_reaction):
+        original = car.position   # grid position
+        # Net effect: reaction score relative to grid spot + wheelspin loss
+        raw_gain = (original - (i + 1))
+        ws_loss = getattr(car, "_wheelspin_loss", 0)
+        net = raw_gain - ws_loss
+        if net > 0:
+            position_changes.append((car, net, "gained"))
+        elif net < 0:
+            position_changes.append((car, abs(net), "lost"))
+        # Apply to time offset (affects total_time later)
+        car.total_time -= reaction_scores[car.team_id] * 0.8
+
+    # Report the biggest moves
+    position_changes.sort(key=lambda x: -x[1])
+    for car, positions, direction in position_changes[:4]:
+        arrow = "🔼" if direction == "gained" else "🔽"
+        events.append(
+            f"{arrow} {car.driver_name} {direction} {positions} position{'s' if positions > 1 else ''} on lap 1!"
+        )
+
+    # ── First lap incidents ───────────────────────────────────────────────
+    # Turn 1 contact probability scales with how many cars are in the field and circuit tightness
+    t1_contact_prob = 0.30 if overtaking_mod <= 0.5 else 0.18
+    if is_wet:
+        t1_contact_prob += 0.12
+
+    if random.random() < t1_contact_prob:
+        victims = random.sample(entries[:8], k=min(2, len(entries[:8])))
+        v1, v2 = victims[0], victims[-1]
+        incident_type = random.choice([
+            f"contact between {v1.driver_name} and {v2.driver_name} into Turn 1!",
+            f"{v1.driver_name} runs wide at Turn 1 — loses several positions!",
+            f"{v1.driver_name} and {v2.driver_name} touch — both carry on with minor damage",
+        ])
+        events.append(f"💥 Lap 1: {incident_type}")
+        # Minor damage penalty
+        for v in victims:
+            v.total_time += random.uniform(1.5, 4.0)
+            if random.random() < 0.08:
+                v.is_dnf = True
+                v.dnf_reason = "First-lap collision damage 💥"
+                events.append(f"🚩 {v.driver_name} retires — first-lap incident!")
+
+    # ── Lap 2 summary ────────────────────────────────────────────────────
+    # Highlight battle at the front and any DRS train forming
+    if len(entries) >= 2:
+        active = [c for c in sorted_by_reaction if not c.is_dnf]
+        if active:
+            leader = active[0]
+            events.append(
+                f"🏎️ Lap 2: {leader.driver_name} leads — "
+                + (
+                    f"building gap early!" if reaction_scores[leader.team_id] > 0.6
+                    else "under pressure from behind!"
+                )
+            )
+            if len(active) >= 2:
+                p2 = active[1]
+                gap_est = abs(leader.total_time - p2.total_time)
+                if gap_est < 0.5:
+                    events.append(
+                        f"⚔️ Lap 2: {p2.driver_name} right on {leader.driver_name}'s gearbox — DRS battle incoming!"
+                    )
+
+    events.append("🏁 Opening phase complete — race settles into racing laps...")
+    return events
+
+
 def simulate_race(
     entries: list[CarEntry],
     circuit_name: str,
@@ -279,12 +460,19 @@ def simulate_race(
         car.total_time = 0.0
 
     events.append(f"🏁 <b>{circuit_name}</b> — {WEATHER_LABELS[weather]}")
-    events.append(f"🚦 Lights out! Race STARTED!")
+
+    # ── Formation Lap ─────────────────────────────────────────────────────
+    formation_events = simulate_formation_lap(entries, weather, dna)
+    events.extend(formation_events)
+
+    # ── Race Start ────────────────────────────────────────────────────────
+    start_events = simulate_race_start(entries, weather, dna, race_name)
+    events.extend(start_events)
 
     fastest_lap = float("inf")
     fastest_lap_holder = None
 
-    active_cars = list(entries)
+    active_cars = [car for car in entries if not car.is_dnf]
 
     for lap in range(1, total_laps + 1):
         lap_events = []

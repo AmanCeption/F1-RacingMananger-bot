@@ -1798,6 +1798,42 @@ async def cmd_runrace(message: Message):
     except Exception as e:
         logger.warning(f"Circuit card failed: {e}")  # circuit image is optional
 
+    # ── TEAM RADIO HIGHLIGHTS ─────────────────────────────────────────
+    radio_msgs = result.get("radio_highlights", [])
+    if radio_msgs:
+        radio_text = "📻 <b>Team Radio Highlights</b>\n\n" + "\n".join(radio_msgs)
+        await message.answer(radio_text)
+
+    # ── DRIVER MORALE ALERTS ──────────────────────────────────────────
+    morale_alerts = result.get("morale_alerts", [])
+    if morale_alerts:
+        morale_text = "🧠 <b>Driver Morale Report</b>\n\n" + "\n".join(morale_alerts)
+        await message.answer(morale_text)
+
+    # ── SPRINT ROUND NOTICE ───────────────────────────────────────────
+    if result.get("is_sprint_round"):
+        await message.answer(
+            "⚡ <b>Sprint Weekend!</b>\n\n"
+            "This is a Sprint round — a short 17-lap race runs before qualifying!\n"
+            "Sprint points: P1=8, P2=7 ... P8=1\n\n"
+            "Use /sprintrace to run the Sprint Race for this round."
+        )
+
+    # ── POST-RACE PRESS CONFERENCE ────────────────────────────────────
+    press_q = result.get("press_question")
+    if press_q:
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔥 Aggressive", callback_data=f"press_aggressive_{press_q['id']}"),
+            InlineKeyboardButton(text="🤝 Diplomatic", callback_data=f"press_diplomatic_{press_q['id']}"),
+            InlineKeyboardButton(text="😶 Evasive",    callback_data=f"press_evasive_{press_q['id']}"),
+        ]])
+        await message.answer(
+            f"🎤 <b>Post-Race Press Conference</b>\n\n{press_q['question']}\n\n"
+            f"<i>Your answer affects team reputation!</i>",
+            reply_markup=kb,
+        )
+
     # ── PRIVATE STAFF INSIGHTS ─────────────────────────────────────────
     staff_insights = result.get("staff_insights", {})
     if staff_insights:
@@ -2253,3 +2289,139 @@ async def cmd_nextrace(message: Message):
             f"  • /practice — Practice session karo\n"
             f"  • /budget — Budget check karo"
         )
+
+
+# ─────────────────────────────────────────────
+# PRESS CONFERENCE CALLBACK
+# ─────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("press_"))
+async def cb_press_answer(callback: CallbackQuery):
+    """Handle press conference answer buttons."""
+    from src.services.f1_features import PRESS_QUESTIONS, apply_press_answer
+    parts = callback.data.split("_", 2)   # press_{type}_{q_id}
+    if len(parts) < 3:
+        await callback.answer("Invalid response.")
+        return
+
+    answer_type = parts[1]   # aggressive / diplomatic / evasive
+    q_id        = parts[2]
+
+    question = next((q for q in PRESS_QUESTIONS if q["id"] == q_id), None)
+    if not question:
+        await callback.answer("Question not found.")
+        return
+
+    rep_change, rival_change, response_text = apply_press_answer(answer_type, question)
+
+    # Apply reputation change
+    if rep_change != 0:
+        async with get_session() as db:
+            team = await TeamService(db).get_by_owner(callback.from_user.id)
+            if team:
+                team.reputation = max(0, min(100, team.reputation + rep_change))
+                await db.commit()
+
+    rep_emoji = "📈" if rep_change > 0 else ("📉" if rep_change < 0 else "➡️")
+    await callback.message.edit_text(
+        f"🎤 <b>Press Conference</b>\n\n"
+        f"<i>{question['question']}</i>\n\n"
+        f"Your answer: <b>{answer_type.capitalize()}</b>\n"
+        f"{response_text}\n\n"
+        f"{rep_emoji} Reputation: <b>{rep_change:+d}</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ─────────────────────────────────────────────
+# /sprintrace — Run Sprint Race for sprint weekends
+# ─────────────────────────────────────────────
+
+@router.message(Command("sprintrace"))
+async def cmd_sprintrace(message: Message):
+    """Run the Sprint Race for a sprint round weekend."""
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Pehle team banao: /createteam")
+            return
+        if not team.league_id:
+            await message.answer("❌ Kisi league mein join karo pehle: /joinleague")
+            return
+
+        from src.models.models import Race, RaceStatus as RS, League
+        from sqlalchemy import and_
+
+        # Get next scheduled race
+        race_res = await db.execute(
+            select(Race).where(
+                and_(Race.league_id == team.league_id,
+                     Race.status == RS.SCHEDULED)
+            ).order_by(Race.round.asc()).limit(1)
+        )
+        race = race_res.scalar_one_or_none()
+        if not race:
+            await message.answer("❌ Koi scheduled race nahi hai abhi.")
+            return
+
+        # Check if it's a sprint round
+        from src.core.config import F1_CALENDAR
+        cal_entry = next((r for r in F1_CALENDAR if r["name"] == race.name), {})
+        if not cal_entry.get("sprint"):
+            await message.answer(
+                f"❌ <b>{safe(race.name)}</b> sprint round nahi hai.\n\n"
+                f"Sprint rounds: China, Austria, Belgium, USA, Brazil, Qatar"
+            )
+            return
+
+    await message.answer(f"⚡ <b>Sprint Race — {safe(race.name)}</b>\n\nSimulating 17-lap sprint... please wait.")
+
+    # Build entries same as main race
+    async with get_session() as db:
+        from src.services.game_services import RaceService
+        entries = await RaceService(db)._build_entries(team.league_id)
+
+    if not entries:
+        await message.answer("❌ No entries built for sprint race.")
+        return
+
+    from src.services.f1_features import simulate_sprint_race
+    sprint_result = await asyncio.to_thread(simulate_sprint_race, entries, race.name)
+
+    # Show events
+    events_text = "\n".join(sprint_result.get("events", []))
+    if len(events_text) > 3800:
+        events_text = events_text[:3800] + "\n..."
+    await message.answer(events_text)
+
+    # Build result card
+    results = sprint_result.get("results", [])
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for r in results[:8]:  # top 8 get points
+        pos = r.get("position")
+        if r.get("dnf"):
+            lines.append(f"💥 DNF — {safe(r['driver'])} ({safe(r['team'])})")
+        else:
+            pos_str = medals[pos-1] if pos and pos <= 3 else f"P{pos}"
+            pts = r.get("points", 0)
+            pts_str = f" +{pts}pts" if pts else ""
+            lines.append(f"{pos_str} {safe(r['driver'])} ({safe(r['team'])}){pts_str}")
+
+    # Apply sprint points to DB teams
+    async with get_session() as db:
+        for r in results:
+            if r.get("points", 0) > 0 and r.get("team_id", -1) > 0:
+                from src.models.models import Team as TM, ConstructorStanding
+                team_obj = await db.get(TM, r["team_id"])
+                if team_obj:
+                    team_obj.total_points = (team_obj.total_points or 0) + r["points"]
+        await db.commit()
+
+    sprint_text = (
+        f"⚡ <b>Sprint Race Result — {safe(race.name)}</b>\n\n"
+        + "\n".join(lines)
+        + "\n\n🏎️ Main race: /runrace"
+    )
+    await message.answer(sprint_text)

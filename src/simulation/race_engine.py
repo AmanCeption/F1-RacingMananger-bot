@@ -654,47 +654,586 @@ def simulate_qualifying(
 
 
 
-def generate_practice_report(car: CarEntry, weather: Weather) -> str:
-    """Generate engineering report from practice session"""
+def generate_practice_report(
+    car: CarEntry,
+    weather: Weather,
+    race_name: str = "",
+    circuit_name: str = "",
+    staff_list: list = None,   # list of (TeamStaff, Staff) tuples
+) -> str:
+    """
+    Generate a fully dynamic engineering report for the practice session.
+    Every report is circuit-specific, weather-sensitive, stat-driven, and
+    enriched by any hired staff. No two reports feel the same.
+    """
+    import random
+    dna = CIRCUIT_DNA.get(race_name, {})
+    tyre_stress   = dna.get("tyre_stress", 1.0)
+    engine_mod    = dna.get("engine_mod", 1.0)
+    overtaking_mod = dna.get("overtaking_mod", 1.0)
+    is_wet_volatile = dna.get("weather_volatile", False)
+    circuit_note   = dna.get("note", "")
+
     issues = []
-    recommendations = []
+    recs = []
 
-    if car.tyre_mgmt < 60:
-        issues.append("⚠️ High tyre degradation detected on rear axle")
-        recommendations.append("Increase tyre pressure by 1.5 PSI")
+    # ── Tyre issues (amplified by circuit tyre stress) ──────────────────
+    tyre_threshold = 65 if tyre_stress >= 1.1 else 55
+    if car.tyre_mgmt < tyre_threshold:
+        psi = round(random.uniform(1.0, 2.5), 1)
+        issues.append(f"⚠️ High tyre degradation on rear axle — stress index {tyre_stress:.1f}x at this circuit")
+        recs.append(f"Increase tyre pressure by {psi} PSI; consider harder compound for race")
+    elif car.tyre_mgmt >= 75 and tyre_stress >= 1.1:
+        issues.append(f"✅ Tyre management strong despite demanding circuit (stress {tyre_stress:.1f}x)")
+        recs.append("Stay on current setup — tyre delta over rivals is an asset here")
 
-    if car.aerodynamics < 55:
-        issues.append("⚠️ Understeer present in medium-speed corners")
-        recommendations.append("Increase front wing angle by 2°")
+    # ── Aero issues (circuit-specific) ──────────────────────────────────
+    if overtaking_mod <= 0.5:                 # Monaco / Hungary style
+        if car.aerodynamics < 70:
+            issues.append("⚠️ Insufficient downforce for slow-speed corners — critical on this circuit")
+            recs.append("Maximise front and rear wing angles — qualifying position everything here")
+        else:
+            issues.append("✅ Aero balance good for slow-speed circuit")
+            recs.append("Maintain high-downforce setup; small front wing trim for sector 2 hairpin")
+    elif engine_mod >= 1.2:                   # Monza / Baku power circuits
+        if car.aerodynamics > 70:
+            issues.append("⚠️ Too much drag detected — top speed deficit on power straights")
+            recs.append("Reduce rear wing angle by 3–4° for straight-line speed; low-drag trim")
+        else:
+            issues.append("✅ Low-drag setup suits this power circuit")
+            recs.append("Fine-tune DRS efficiency; prioritise engine deployment over aero")
+    else:
+        if car.aerodynamics < 55:
+            issues.append("⚠️ Understeer in medium-speed corners — aero deficit")
+            recs.append("Increase front wing angle by 2°; check front splitter ride height")
 
-    if car.engine < 55:
-        issues.append("⚠️ Power unit showing thermal stress")
-        recommendations.append("Reduce engine mode to FLOW in sector 2")
+    # ── Engine / Power Unit ──────────────────────────────────────────────
+    pu_threshold = 60 if engine_mod >= 1.1 else 50
+    if car.engine < pu_threshold:
+        mode = random.choice(["sector 2 deployment", "full-race ERS harvesting", "turbo mapping"])
+        issues.append(f"⚠️ Power unit thermal stress detected — engine_mod {engine_mod:.2f}x at this circuit")
+        recs.append(f"Reduce engine mode to FLOW; prioritise {mode} efficiency")
+    elif car.engine >= 75 and engine_mod >= 1.1:
+        issues.append("✅ Power unit performing well on a power-sensitive circuit")
+        recs.append("Hold engine mode — straight-line advantage can be leveraged in qualifying")
 
+    # ── Chassis / Balance ────────────────────────────────────────────────
     if car.chassis < 55:
-        issues.append("⚠️ Oversteer on corner exit")
-        recommendations.append("Soften rear suspension")
+        corner_type = "low-speed" if overtaking_mod <= 0.7 else "high-speed"
+        issues.append(f"⚠️ Oversteer on corner exit — {corner_type} sections affected")
+        recs.append("Soften rear suspension; increase rear ARB stiffness by one click")
+    elif car.chassis >= 75:
+        issues.append("✅ Chassis balance optimal — strong platform for this circuit")
 
+    # ── Reliability ──────────────────────────────────────────────────────
     if car.reliability < 55:
-        issues.append("⚠️ Hydraulics pressure fluctuations detected")
+        component = random.choice([
+            "hydraulics pressure fluctuations",
+            "gearbox oil temperature spike",
+            "MGU-K harvesting anomaly",
+            "brake-by-wire calibration drift",
+        ])
+        issues.append(f"⚠️ {component.capitalize()} detected in data")
+        recs.append("Flag to PU team overnight; run reliability mode if issue persists in qualifying")
 
+    # ── Weather-specific insights ────────────────────────────────────────
+    weather_section = ""
+    if weather == Weather.HEAVY_RAIN:
+        tyre_rec = "full wets immediately"
+        weather_section = (
+            f"⛈️ <b>Weather Alert — Heavy Rain</b>\n"
+            f"  • Start on {tyre_rec}; switch to intermediates only if track dries sector by sector\n"
+            f"  • Wet weather skill: {car.wet_weather}/100 — "
+            + ("driver handles rain well ✅" if car.wet_weather >= 65 else "consider conservative strategy ⚠️")
+        )
+    elif weather == Weather.LIGHT_RAIN:
+        weather_section = (
+            f"🌧️ <b>Weather Note — Light Rain</b>\n"
+            f"  • Intermediates likely optimal — monitor sector times for slick window\n"
+            f"  • Wet weather skill: {car.wet_weather}/100 — "
+            + ("driver comfortable in mixed conditions ✅" if car.wet_weather >= 60 else "stay defensive on strategy ⚠️")
+        )
+    elif weather == Weather.MIXED:
+        weather_section = (
+            f"🌦️ <b>Weather Note — Mixed Conditions</b>\n"
+            f"  • Keep both inter and slick sets warm on the blankets\n"
+            f"  • Reactive strategy will be key — brief your Race Engineer on switch triggers"
+            + ("\n  • {'Circuit is known for volatile weather — expect multiple changes' if is_wet_volatile else ''}")
+        )
+    elif is_wet_volatile:
+        weather_section = "🌤️ <b>Weather Watch:</b> Circuit historically prone to sudden showers — monitor closely"
+
+    # ── Fallback if no issues ────────────────────────────────────────────
     if not issues:
-        issues.append("✅ Car balance nominal")
-        recommendations.append("Minor setup refinements only")
+        issues.append("✅ Car balance nominal across all three sectors")
+        recs.append("Minor setup refinements only — focus on driver feedback on brake bias")
 
-    weather_note = {
-        Weather.LIGHT_RAIN: "🌧️ Rain expected — consider early switch to intermediates",
-        Weather.HEAVY_RAIN: "⛈️ Full wets required — setup change recommended",
-        Weather.MIXED: "🌦️ Mixed conditions — be ready to change strategy",
-    }.get(weather, "")
+    # ── Circuit DNA note ─────────────────────────────────────────────────
+    dna_line = f"\n📌 <b>Circuit characteristic:</b> {circuit_note}" if circuit_note else ""
 
+    # ── Build report ─────────────────────────────────────────────────────
     report = "📊 <b>Engineering Report — Practice Session</b>\n\n"
     report += "<b>Issues Found:</b>\n" + "\n".join(f"  {i}" for i in issues)
-    report += "\n\n<b>Recommendations:</b>\n" + "\n".join(f"  • {r}" for r in recommendations)
-    if weather_note:
-        report += f"\n\n{weather_note}"
+    report += "\n\n<b>Recommendations:</b>\n" + "\n".join(f"  • {r}" for r in recs)
+    if weather_section:
+        report += f"\n\n{weather_section}"
+    if dna_line:
+        report += dna_line
+
+    # ── Staff pre-race inputs ─────────────────────────────────────────────
+    if staff_list:
+        staff_section = generate_staff_practice_inputs(
+            staff_list, car, weather, race_name, circuit_name, dna
+        )
+        if staff_section:
+            report += f"\n\n{staff_section}"
 
     return report
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAFF PRE-RACE / PRACTICE INPUTS
+# Each hired role gives circuit+condition-specific advice before qualifying
+# ─────────────────────────────────────────────────────────────────────────────
+
+STAFF_PRACTICE_TEMPLATES = {
+    "technical_director": [
+        "🔬 <b>{name} (Technical Director):</b>\n"
+        "Looking at the {circuit} data — our {best_stat} is a real advantage here. "
+        "{circuit_td_note} I want to trial {td_upgrade} before qualifying.",
+
+        "🔬 <b>{name} (Technical Director):</b>\n"
+        "{circuit_td_note} Our {worst_stat} is the concern for this weekend. "
+        "I'm authorising a setup change to {td_fix} — should recover {td_gain}.",
+    ],
+    "chief_designer": [
+        "📐 <b>{name} (Chief Designer):</b>\n"
+        "For {circuit_name}, I've spec'd a {wing_config} setup. "
+        "{balance_note}. The {chassis_note}.",
+
+        "📐 <b>{name} (Chief Designer):</b>\n"
+        "{circuit_name} is a {circuit_character} circuit — "
+        "our philosophy suits it {suit_rating}. {designer_rec}.",
+    ],
+    "head_of_aerodynamics": [
+        "💨 <b>{name} (Head of Aerodynamics):</b>\n"
+        "CFD data for {circuit_name}: {aero_insight}. "
+        "I recommend {aero_wing_rec} to maximise {aero_priority}.",
+
+        "💨 <b>{name} (Head of Aerodynamics):</b>\n"
+        "{circuit_name} requires {aero_demand}. "
+        "Our current package gives {aero_current_rating} — {aero_action}.",
+    ],
+    "aerodynamicist": [
+        "💨 <b>{name} (Aerodynamicist):</b>\n"
+        "Tunnel simulation matched track data in sector {best_sector}. "
+        "{aero_issue_small}. Will refine the {aero_part} overnight.",
+    ],
+    "race_engineer": [
+        "📡 <b>{name} (Race Engineer):</b>\n"
+        "Telemetry from FP1 shows {driver_name} is {driver_practice_note}. "
+        "{re_setup_rec}. Target lap delta: -{re_gain}s.",
+
+        "📡 <b>{name} (Race Engineer):</b>\n"
+        "{driver_name} reported {driver_feel} through {circuit_section}. "
+        "I'm adjusting {re_adjust} — should help in qualifying.",
+    ],
+    "chief_race_engineer": [
+        "📻 <b>{name} (Chief Race Engineer):</b>\n"
+        "Modelled {models_run} strategies for {circuit_name}. "
+        "Primary plan: {strategy_plan}. "
+        "{weather_strategy_note}. SC probability: {sc_prob}%.",
+
+        "📻 <b>{name} (Chief Race Engineer):</b>\n"
+        "For {circuit_name} — {strategy_headline}. "
+        "{pit_window_note}. Tyre order recommendation: {tyre_order}.",
+    ],
+    "head_of_strategy": [
+        "📊 <b>{name} (Head of Strategy):</b>\n"
+        "Ran {models_run} race simulations overnight. "
+        "Optimal strategy for {circuit_name}: {strategy_plan}. "
+        "Key decision point: lap {decision_lap}. {undercut_note}.",
+
+        "📊 <b>{name} (Head of Strategy):</b>\n"
+        "{circuit_name} historically has SC probability of {sc_prob}%. "
+        "I recommend {sc_plan}. {weather_strategy_note}.",
+    ],
+    "pit_crew_chief": [
+        "🔧 <b>{name} (Pit Crew Chief):</b>\n"
+        "Pit lane analysis for {circuit_name}: {pit_lane_note}. "
+        "Crew drilled {drill_focus} this morning — targeting {target_stop}s stops.",
+
+        "🔧 <b>{name} (Pit Crew Chief):</b>\n"
+        "Pit entry/exit delta at {circuit_name} is {pit_delta}s. "
+        "{pit_strategy_note}. We're ready for {expected_stops} stops.",
+    ],
+    "sporting_director": [
+        "📋 <b>{name} (Sporting Director):</b>\n"
+        "Tyre allocation for {circuit_name}: {tyre_alloc}. "
+        "{regulation_note}. Pre-race parc fermé briefing at T-4h.",
+
+        "📋 <b>{name} (Sporting Director):</b>\n"
+        "Rival teams running {rival_note} at {circuit_name}. "
+        "{sporting_rec}. {regulation_note}.",
+    ],
+    "power_unit_director": [
+        "⚡ <b>{name} (Power Unit Director):</b>\n"
+        "{circuit_name} is {pu_circuit_demand}. "
+        "Setting engine to {pu_mode_rec} for qualifying; {pu_race_mode} for race. "
+        "ERS deployment: {ers_plan}.",
+
+        "⚡ <b>{name} (Power Unit Director):</b>\n"
+        "Thermal data from FP shows {thermal_status}. "
+        "{pu_action}. {token_status}.",
+    ],
+    "team_principal": [
+        "🎙️ <b>{name} (Team Principal):</b>\n"
+        "{circuit_name} is a {tp_circuit_feel} race for us. "
+        "Target: {tp_target}. {tp_motivation}.",
+    ],
+    "performance_director": [
+        "📈 <b>{name} (Performance Director):</b>\n"
+        "Performance index coming into {circuit_name}: {perf_index}/100. "
+        "Key metric to improve: {worst_stat}. {perf_action}.",
+    ],
+}
+
+
+def generate_staff_practice_inputs(
+    staff_list: list,
+    car: CarEntry,
+    weather: Weather,
+    race_name: str,
+    circuit_name: str,
+    dna: dict,
+) -> str:
+    """Generate pre-race/practice staff inputs — circuit and condition aware."""
+    import random
+
+    if not staff_list:
+        return ""
+
+    tyre_stress   = dna.get("tyre_stress", 1.0)
+    engine_mod    = dna.get("engine_mod", 1.0)
+    overtaking_mod = dna.get("overtaking_mod", 1.0)
+    weather_volatile = dna.get("weather_volatile", False)
+    weather_str = weather.value.replace("_", " ")
+
+    team_stats = {
+        "engine": car.engine, "aerodynamics": car.aerodynamics,
+        "chassis": car.chassis, "reliability": car.reliability,
+        "tyres": car.tyre_mgmt, "pit_crew": car.pit_crew,
+    }
+    stat_labels = {
+        "engine": "power unit", "aerodynamics": "aero package",
+        "chassis": "chassis", "reliability": "reliability",
+        "tyres": "tyre management", "pit_crew": "pit crew",
+    }
+    best_stat_key  = max(team_stats, key=team_stats.get)
+    worst_stat_key = min(team_stats, key=team_stats.get)
+
+    # Circuit character strings
+    if overtaking_mod <= 0.4:
+        circuit_character = "street/low-overtaking"
+        aero_demand = "maximum downforce"
+        aero_wing_rec = "high rear wing + maximum front flap"
+        aero_priority = "mechanical grip in slow corners"
+        wing_config = "high-downforce"
+        circuit_section = "the tight hairpins"
+    elif engine_mod >= 1.2:
+        circuit_character = "high-speed power"
+        aero_demand = "minimum drag"
+        aero_wing_rec = "low rear wing, slim front flap"
+        aero_priority = "straight-line speed"
+        wing_config = "low-drag"
+        circuit_section = "the long straights"
+    elif weather_volatile or weather in [Weather.LIGHT_RAIN, Weather.HEAVY_RAIN, Weather.MIXED]:
+        circuit_character = "weather-volatile"
+        aero_demand = "balanced downforce with wet-weather robustness"
+        aero_wing_rec = "medium wing angles for wet/dry flexibility"
+        aero_priority = "aero stability in mixed conditions"
+        wing_config = "balanced"
+        circuit_section = "the mixed-condition corners"
+    else:
+        circuit_character = "technical balanced"
+        aero_demand = "balanced downforce and drag"
+        aero_wing_rec = "neutral wing angles, slight front bias"
+        aero_priority = "overall aero balance"
+        wing_config = "balanced"
+        circuit_section = "the technical sector 2"
+
+    # Tyre strategy options by circuit
+    if tyre_stress >= 1.2:
+        strategy_plan = "2-stop: Soft→Medium→Hard — tyres will struggle at this circuit"
+        tyre_order = "Soft→Medium→Hard"
+    elif tyre_stress <= 0.85:
+        strategy_plan = "1-stop: Medium→Hard — low degradation circuit"
+        tyre_order = "Medium→Hard"
+    else:
+        strategy_plan = "1-stop Medium→Hard or aggressive 2-stop Soft→Soft→Medium"
+        tyre_order = "Medium→Hard (primary), Soft start (alternative)"
+
+    decision_lap = random.randint(18, 32)
+    sc_prob = random.randint(10, 50) + (15 if weather_volatile else 0)
+    sc_plan = "keep an extra soft set ready for SC restart" if sc_prob > 35 else "standard plan — SC unlikely"
+
+    weather_strategy_note = (
+        f"In {weather_str}, intermediates may open a free stop window"
+        if weather in [Weather.LIGHT_RAIN, Weather.MIXED]
+        else ("Full wet start — switch to inters lap 3–5 if rain eases"
+              if weather == Weather.HEAVY_RAIN
+              else "Dry race expected — no weather wildcard")
+    )
+
+    # Circuit-specific TD notes
+    if engine_mod >= 1.2:
+        circuit_td_note = f"This is a power circuit (engine_mod {engine_mod:.2f}x) — our PU performance will be decisive."
+        td_upgrade = "reduced-drag front wing specification"
+        td_fix = "optimise ERS deployment on the long straights"
+        td_gain = "0.2–0.3s per lap"
+    elif overtaking_mod <= 0.5:
+        circuit_td_note = "Qualifying position is everything here — setup must be pure low-speed grip."
+        td_upgrade = "extra front wing Gurney flap"
+        td_fix = "maximise mechanical grip in slow corners"
+        td_gain = "improved consistency through S2"
+    elif tyre_stress >= 1.1:
+        circuit_td_note = f"Tyre stress is high ({tyre_stress:.1f}x) — management will be the race differentiator."
+        td_upgrade = "revised brake cooling ducts to protect rear tyres"
+        td_fix = "softer rear compounds to reduce inner edge wear"
+        td_gain = "extra 3–4 laps on each stint"
+    else:
+        circuit_td_note = f"Balanced circuit — our {stat_labels[best_stat_key]} should shine."
+        td_upgrade = "revised floor edge geometry"
+        td_fix = "balance the car more neutrally through all corner speeds"
+        td_gain = "0.15s"
+
+    # Balance / chassis notes
+    if car.chassis >= 70:
+        balance_note = "Car feels planted — minor ARB adjustment only"
+        chassis_note = "chassis is providing excellent platform for all corner types"
+    else:
+        balance_note = "We have understeer in S2 — need to redistribute balance forward"
+        chassis_note = "chassis needs stiffer front spring to help rotation"
+
+    # Suit rating
+    if (circuit_character == "high-speed power" and car.engine >= 70) or \
+       (circuit_character == "street/low-overtaking" and car.aerodynamics >= 70) or \
+       (circuit_character == "technical balanced" and car.chassis >= 65):
+        suit_rating = "very well"
+        designer_rec = f"Stick with current setup philosophy — no major changes"
+    else:
+        suit_rating = "partially"
+        designer_rec = f"I want to trial a revised {wing_config} wing package before qualifying"
+
+    # Aero insights
+    aero_insight = (
+        f"drag coefficient {'optimal' if car.aerodynamics >= 65 else 'above target'} for {circuit_character} demands"
+    )
+    aero_current_rating = "competitive" if car.aerodynamics >= 65 else "below target"
+    aero_action = (
+        "no change needed — confident in the package"
+        if car.aerodynamics >= 65
+        else f"I want to run a revised {aero_wing_rec} in FP2"
+    )
+    aero_issue_small = (
+        "Minor separation at rear beam wing above 270km/h" if car.aerodynamics < 65
+        else "Clean aero data — no anomalies detected"
+    )
+    aero_part = "rear diffuser" if car.aerodynamics < 65 else "front wing endplates"
+    best_sector = random.choice([1, 2, 3])
+
+    # RE notes
+    driver_practice_note = (
+        "finding the limit well — just needs tyre warm-up routine"
+        if car.chassis >= 65 else
+        "struggling with understeer on entry — setup change needed"
+    )
+    re_setup_rec = (
+        "Adjusting brake bias 1 click forward and softening front ARB"
+        if car.chassis < 65 else
+        "Setup is working — just refining brake bias for race start"
+    )
+    re_gain = round(random.uniform(0.1, 0.4), 2)
+    driver_feel = (
+        "good balance through the fast stuff" if car.chassis >= 65
+        else "rear instability under braking"
+    )
+    re_adjust = "rear damper rebound settings" if car.chassis < 65 else "front spring rate"
+
+    # PU director
+    if engine_mod >= 1.15:
+        pu_circuit_demand = f"a power-critical circuit (mod {engine_mod:.2f}x)"
+        pu_mode_rec = "QUAL mode for maximum power"
+        pu_race_mode = "FLOW mode to protect the unit"
+        ers_plan = "full deployment on S1 and S3 straights; harvest through S2"
+    else:
+        pu_circuit_demand = "moderately power-sensitive"
+        pu_mode_rec = "standard QUAL mode"
+        pu_race_mode = "standard RACE mode"
+        ers_plan = "balanced deployment throughout"
+    thermal_status = (
+        "all temps in green — PU comfortable" if car.reliability >= 65
+        else "yellow on MGU-H temperatures — monitoring closely"
+    )
+    pu_action = (
+        "No action needed — PU in excellent health" if car.reliability >= 65
+        else "Running cooling mode in S2 until temperatures normalise"
+    )
+    token_status = random.choice([
+        "1 development token remaining this season",
+        "2 tokens left — may deploy one here if data supports it",
+        "Token freeze in effect — no PU changes permitted",
+    ])
+
+    # Pit crew
+    pit_lane_note = (
+        "Pit lane entry is tight here — coordinate brake regen carefully"
+        if circuit_character == "street/low-overtaking"
+        else "Clean pit lane entry — standard procedure"
+    )
+    drill_focus = random.choice(["front jack speed", "rear wheel gun timing", "tyre heating protocol", "lollipop release"])
+    target_stop = round(random.uniform(2.2, 3.0), 1)
+    pit_delta = round(random.uniform(17, 24), 1)
+    pit_strategy_note = (
+        "Undercut is powerful here — aim to pit 2 laps earlier than rivals"
+        if overtaking_mod <= 0.6
+        else "Overcut viable — tyre delta will be the deciding factor"
+    )
+    expected_stops = "2" if tyre_stress >= 1.1 else "1"
+
+    # Sporting director
+    tyre_alloc = random.choice([
+        "3 Soft / 3 Medium / 2 Hard",
+        "2 Soft / 4 Medium / 2 Hard",
+        "4 Soft / 2 Medium / 2 Hard",
+    ])
+    regulation_note = random.choice([
+        "Parc fermé applies post-qualifying — no setup changes permitted",
+        "DRS detection point confirmed — check it in FP2",
+        "Front wing flexibility test scheduled post-FP2",
+    ])
+    rival_note = random.choice([
+        "high-downforce configs",
+        "low-drag setups",
+        "mixed strategies — hard to read",
+    ])
+    sporting_rec = (
+        "Suggest we box earliest to avoid traffic — pit lane is short here"
+        if circuit_character == "street/low-overtaking"
+        else "Standard tyre allocation strategy — no surprises expected"
+    )
+
+    # TP
+    tp_circuit_feel = (
+        "historically strong" if car.engine >= 65 and car.aerodynamics >= 65
+        else "challenging but an opportunity"
+    )
+    tp_target = (
+        f"Top 5 minimum" if car.engine >= 70
+        else "Points finish and strong learning weekend"
+    )
+    tp_motivation = random.choice([
+        "The team is ready — let's execute perfectly.",
+        "I believe in this car and this team — let's show it.",
+        "Rivals won't see us coming — stay focused.",
+    ])
+
+    # Perf director
+    perf_index = min(99, max(40, int((car.engine + car.aerodynamics + car.chassis) / 3) + random.randint(-5, 5)))
+    perf_action = (
+        f"If we improve {stat_labels[worst_stat_key]} by 10 points, we estimate a P{random.randint(1,3)} gain on grid."
+    )
+
+    ctx = {
+        "name": "",
+        "circuit_name": circuit_name or race_name,
+        "circuit_character": circuit_character,
+        "circuit_section": circuit_section,
+        "circuit_td_note": circuit_td_note,
+        "best_stat": stat_labels[best_stat_key],
+        "worst_stat": stat_labels[worst_stat_key],
+        "td_upgrade": td_upgrade,
+        "td_fix": td_fix,
+        "td_gain": td_gain,
+        "wing_config": wing_config,
+        "balance_note": balance_note,
+        "chassis_note": chassis_note,
+        "suit_rating": suit_rating,
+        "designer_rec": designer_rec,
+        "aero_insight": aero_insight,
+        "aero_current_rating": aero_current_rating,
+        "aero_action": aero_action,
+        "aero_demand": aero_demand,
+        "aero_wing_rec": aero_wing_rec,
+        "aero_priority": aero_priority,
+        "aero_issue_small": aero_issue_small,
+        "aero_part": aero_part,
+        "best_sector": best_sector,
+        "driver_name": car.driver_name,
+        "driver_practice_note": driver_practice_note,
+        "re_setup_rec": re_setup_rec,
+        "re_gain": re_gain,
+        "driver_feel": driver_feel,
+        "re_adjust": re_adjust,
+        "models_run": random.randint(12, 40),
+        "strategy_plan": strategy_plan,
+        "weather_strategy_note": weather_strategy_note,
+        "sc_prob": sc_prob,
+        "sc_plan": sc_plan,
+        "decision_lap": decision_lap,
+        "strategy_headline": strategy_plan,
+        "pit_window_note": f"Pit window: lap {decision_lap}–{decision_lap + 4}",
+        "tyre_order": tyre_order,
+        "pit_lane_note": pit_lane_note,
+        "drill_focus": drill_focus,
+        "target_stop": target_stop,
+        "pit_delta": pit_delta,
+        "pit_strategy_note": pit_strategy_note,
+        "expected_stops": expected_stops,
+        "tyre_alloc": tyre_alloc,
+        "regulation_note": regulation_note,
+        "rival_note": rival_note,
+        "sporting_rec": sporting_rec,
+        "pu_circuit_demand": pu_circuit_demand,
+        "pu_mode_rec": pu_mode_rec,
+        "pu_race_mode": pu_race_mode,
+        "ers_plan": ers_plan,
+        "thermal_status": thermal_status,
+        "pu_action": pu_action,
+        "token_status": token_status,
+        "tp_circuit_feel": tp_circuit_feel,
+        "tp_target": tp_target,
+        "tp_motivation": tp_motivation,
+        "perf_index": perf_index,
+        "perf_action": perf_action,
+    }
+
+    lines = [f"\n👥 <b>PRE-RACE STAFF BRIEFING — {(circuit_name or race_name).upper()}</b>\n"]
+
+    seen_roles = set()
+    for _, s in staff_list:
+        role = s.role.value if hasattr(s.role, "value") else str(s.role)
+        if role in seen_roles:
+            continue
+        seen_roles.add(role)
+
+        templates = STAFF_PRACTICE_TEMPLATES.get(role, [])
+        if not templates:
+            continue
+
+        template = random.choice(templates)
+        ctx["name"] = s.name
+        try:
+            lines.append(template.format(**ctx))
+            lines.append("")
+        except KeyError:
+            lines.append(f"🗣️ <b>{s.name}:</b> Preparing setup recommendations for {circuit_name or race_name}.")
+            lines.append("")
+
+    if len(lines) <= 1:
+        return ""
+
+    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

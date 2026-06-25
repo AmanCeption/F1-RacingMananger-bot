@@ -373,10 +373,56 @@ async def cmd_strategy(message: Message):
             return
 
         driver = data["drivers"][0]["driver"]
+
+        # ── Head of Strategy tyre recommendation ──────────────────────────
+        from src.models.models import TeamStaff as TS2, Staff as S2
+        from src.core.config import CIRCUIT_DNA, TYRE_DATA
+        strat_staff_res = await db.execute(
+            select(TS2, S2).join(S2, TS2.staff_id == S2.id)
+            .where(and_(TS2.team_id == team.id, S2.role == "head_of_strategy"))
+        )
+        strat_row = strat_staff_res.first()
+        rec_block = ""
+        if strat_row:
+            hos = strat_row[1]
+            dna = CIRCUIT_DNA.get(race.name, {})
+            tyre_stress = dna.get("tyre_stress", 1.0)
+            overtaking  = dna.get("overtaking_mod", 1.0)
+            weather_str = str(race.weather or "sunny").lower()
+            # Recommend compound based on circuit traits + weather
+            if weather_str in ("heavy_rain", "light_rain"):
+                rec_compound = "Intermediate 🟢" if weather_str == "light_rain" else "Wet 🔵"
+                rec_strategy = "1-stop"
+                reason = "Rain forecast — wet tyres essential"
+            elif tyre_stress >= 1.2:
+                rec_compound = "Hard ⚪"
+                rec_strategy = "1-stop"
+                reason = f"High tyre stress circuit ({race.circuit})"
+            elif tyre_stress <= 0.85:
+                rec_compound = "Soft 🔴"
+                rec_strategy = "2-stop"
+                reason = f"Low wear circuit — push on softs"
+            elif overtaking <= 0.7:
+                rec_compound = "Soft 🔴"
+                rec_strategy = "1-stop"
+                reason = "Overtaking very hard — qualify up front, stay out"
+            else:
+                rec_compound = "Medium 🟡"
+                rec_strategy = "2-stop"
+                reason = "Balanced circuit — medium opens both windows"
+            skill_tag = f" (Skill {hos.skill}/100)" if hos.skill >= 90 else ""
+            rec_block = (
+                f"\n\n📊 <b>{hos.name} recommends:</b>{skill_tag}\n"
+                f"  🛞 Start on <b>{rec_compound}</b>\n"
+                f"  🔁 Strategy: <b>{rec_strategy}</b>\n"
+                f"  <i>Reason: {reason}</i>"
+            )
+
         caption = (
             f"🏁 <b>Next Race: {race.name} {race.country}</b>\n"
             f"🏎️ Circuit: {race.circuit}\n"
-            f"🔄 Laps: {race.laps}\n\n"
+            f"🔄 Laps: {race.laps}\n"
+            f"{rec_block}\n\n"
             f"📋 <b>Set Race Strategy</b>\n\n"
             f"Choose strategy for your #1 driver:"
         )

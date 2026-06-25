@@ -323,6 +323,70 @@ async def send_race_results(bot: Bot, league_id: int, race_result: dict):
 
     logger.info(f"Race results sent to {sent} players in league {league_id}.")
 
+
+# ─────────────────────────────────────────────
+# SEASON END ANNOUNCEMENT
+# ─────────────────────────────────────────────
+
+async def send_season_end_announcement(bot: Bot, league_id: int, season_summary: dict):
+    """
+    Send a rich season-end announcement to all players in the league.
+    Called from scheduler/auto_run_races when _end_season triggers.
+    """
+    logger.info(f"Sending season end announcement for league {league_id}, season {season_summary.get('season')}")
+
+    season_num      = season_summary.get("season", "?")
+    league_name     = season_summary.get("league_name", "League")
+    cons_champ      = season_summary.get("constructor_champion_name", "TBD")
+    cons_pts        = season_summary.get("constructor_champion_points", 0)
+    drv_champ       = season_summary.get("driver_champion_name", "TBD")
+    drv_pts         = season_summary.get("driver_champion_points", 0)
+    drv_team        = season_summary.get("driver_champion_team_name", "")
+
+    announcement = (
+        f"🏆 <b>SEASON {season_num} — CHAMPIONSHIP OVER!</b>\n"
+        f"🏟️ <i>{league_name}</i>\n"
+        f"{'═' * 28}\n\n"
+        f"👑 <b>DRIVERS' CHAMPION</b>\n"
+        f"  🏎️ <b>{drv_champ}</b> ({drv_team})\n"
+        f"  📊 {drv_pts} points\n\n"
+        f"🏗️ <b>CONSTRUCTORS' CHAMPION</b>\n"
+        f"  🏢 <b>{cons_champ}</b>\n"
+        f"  📊 {cons_pts} points\n"
+        f"  💰 Prize: <b>$100,000,000</b> awarded!\n\n"
+        f"{'─' * 28}\n"
+        f"🌅 <b>Season {season_num + 1} is coming!</b>\n"
+        f"Drivers age, young stars develop, and the grid resets.\n"
+        f"Use /league to check when the new season starts.\n\n"
+        f"🔬 Spend your Research Points: /research\n"
+        f"🏪 Check the driver market: /drivermarket"
+    )
+
+    async with get_session() as db:
+        teams_res = await db.execute(select(Team).where(Team.league_id == league_id))
+        teams = teams_res.scalars().all()
+
+        sent = 0
+        for team in teams:
+            user_res = await db.execute(select(User).where(User.id == team.owner_id))
+            user = user_res.scalar_one_or_none()
+            if not user or user.is_banned:
+                continue
+
+            # Personalised ending line
+            is_cons_champ = team.name == cons_champ
+            personal = ""
+            if is_cons_champ:
+                personal = f"\n\n🎉 <b>Congratulations! Your team is the Constructor Champion!</b>"
+
+            try:
+                await safe_send(bot, user.id, announcement + personal)
+                sent += 1
+            except Exception as e:
+                logger.warning(f"Failed to send season end to {user.id}: {e}")
+
+    logger.info(f"Season end announcement sent to {sent} players in league {league_id}.")
+
 # DAILY REWARD REMINDER
 # ─────────────────────────────────────────────
 

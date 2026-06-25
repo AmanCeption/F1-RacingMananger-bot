@@ -633,6 +633,12 @@ class RaceService:
         if not race:
             return None
 
+        # Block if qualifying already done for this race
+        if race.status == RaceStatus.QUALIFYING:
+            raise ValueError(f"ALREADY_QUALIFIED:{race.name}")
+        if race.status in (RaceStatus.RACING, RaceStatus.FINISHED):
+            raise ValueError(f"ALREADY_FINISHED:{race.name}")
+
         from src.simulation.race_engine import generate_weather, CarEntry, simulate_qualifying, Weather
 
         weather_val = race.weather  # may already be set from practice
@@ -801,6 +807,10 @@ class RaceService:
         race = await self.get_next_race(league_id)
         if not race:
             return None
+
+        # Block if race already finished
+        if race.status == RaceStatus.FINISHED:
+            raise ValueError(f"ALREADY_FINISHED:{race.name}")
 
         # If already RACING (stuck from a previous attempt), just re-run it
         if race.status != RaceStatus.RACING:
@@ -1027,6 +1037,8 @@ class RaceService:
                 "dnf": car.is_dnf,
                 "dnf_reason": car.dnf_reason,
                 "fastest_lap": car.has_fastest_lap,
+                "gap_to_leader": car.gap_to_leader if not car.is_dnf else None,
+                "pit_stops": car.pit_stops_done,
             }
             for car in result["results"]
         ]

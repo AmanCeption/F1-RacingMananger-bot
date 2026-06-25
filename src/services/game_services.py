@@ -802,7 +802,8 @@ class RaceService:
             "pole_sitter": result["pole_sitter"],
         }
 
-    async def run_race(self, league_id: int) -> Optional[dict]:
+    async def run_race(self, league_id: int, bot=None) -> Optional[dict]:
+        self._bot = bot  # stored for achievement notifications
         """Execute next race for a league"""
         race = await self.get_next_race(league_id)
         if not race:
@@ -968,7 +969,7 @@ class RaceService:
 
         # ── Step 4: Check achievements (independent) ──────────────────────────
         try:
-            await self._check_all_achievements(result)
+            await self._check_all_achievements(result, bot=getattr(self, "_bot", None))
         except Exception as e:
             logger.error(f"Achievement check failed for race {race.id}: {e}")
 
@@ -1117,11 +1118,12 @@ class RaceService:
         for car in result["results"]:
             await self._process_sponsors(car.team_id, car.position if not car.is_dnf else None)
 
-    async def _check_all_achievements(self, result: dict):
+    async def _check_all_achievements(self, result: dict, bot=None):
         """Check achievements for every car in the result."""
         weather = result["weather"]
         for car in result["results"]:
-            await self._check_achievements(car.team_id, car.position if not car.is_dnf else None, weather)
+            if car.team_id > 0:
+                await self._check_achievements(car.team_id, car.position if not car.is_dnf else None, weather, bot=bot)
 
     async def _generate_staff_insights(self, teams: list, result: dict, league_id: int) -> dict:
         """Generate per-team staff insights for the post-race report."""
@@ -1229,10 +1231,12 @@ class RaceService:
             if ts.races_completed >= ts.contract_races:
                 ts.is_active = False
 
-    async def _check_achievements(self, team_id: int, position: Optional[int], weather):
+    async def _check_achievements(self, team_id: int, position: Optional[int], weather, bot=None):
         team = await TeamService(self.db).get(team_id)
         if not team:
             return
+
+        newly_unlocked: list[Achievement] = []
 
         async def award(key: str):
             ach_result = await self.db.execute(
@@ -1256,6 +1260,7 @@ class RaceService:
             team.budget += ach.reward_money
             team.research_points += ach.reward_rp
             team.reputation = min(100, team.reputation + ach.reward_reputation)
+            newly_unlocked.append(ach)
 
         await award("first_race")
         if position == 1:
@@ -1266,6 +1271,34 @@ class RaceService:
             await award("hundred_points")
         if weather == "heavy_rain" and position == 1:
             await award("rain_master")
+
+        # ── DM the owner for each newly unlocked achievement ─────────────
+        if newly_unlocked and team.owner_id and bot:
+            from src.models.models import User
+            user_res = await self.db.execute(
+                select(User).where(User.id == team.owner_id)
+            )
+            user = user_res.scalar_one_or_none()
+            if user and not user.is_banned:
+                for ach in newly_unlocked:
+                    rewards = []
+                    if ach.reward_money:
+                        rewards.append(f"💰 +${ach.reward_money:,}")
+                    if ach.reward_rp:
+                        rewards.append(f"🔬 +{ach.reward_rp} RP")
+                    if ach.reward_reputation:
+                        rewards.append(f"⭐ +{ach.reward_reputation} Rep")
+                    reward_line = "  " + " | ".join(rewards) if rewards else ""
+                    msg = (
+                        f"{ach.icon} <b>Achievement Unlocked!</b>\n\n"
+                        f"<b>{ach.name}</b>\n"
+                        f"<i>{ach.description}</i>\n\n"
+                        f"🎁 <b>Rewards:</b>\n{reward_line}"
+                    )
+                    try:
+                        await bot.send_message(user.id, msg, parse_mode="HTML")
+                    except Exception:
+                        pass
 
     async def _end_season(self, league: League):
         """End season, award champions"""

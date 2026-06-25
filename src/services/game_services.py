@@ -930,7 +930,7 @@ class RaceService:
 
         # Run simulation in background thread (CPU-bound — must not block the event loop)
         import asyncio
-        result = await asyncio.to_thread(simulate_race, entries, race.circuit, race.laps, weather)
+        result = await asyncio.to_thread(simulate_race, entries, race.circuit, race.laps, weather, race.name)
 
         # ── Step 1: Save results & update standings ──────────────────────────
         await self._save_race_results(race, teams, league_id, result)
@@ -968,6 +968,43 @@ class RaceService:
 
         await self.db.flush()
 
+        # ── Driver Morale checks + Team Radio highlights ──────────────────
+        from src.services.f1_features import (
+            check_driver_morale, get_radio_message, get_press_conference_question
+        )
+        morale_alerts = []
+        radio_highlights = []
+
+        for car in result["results"]:
+            pos = car.position if not car.is_dnf else 20
+            # Team car avg for morale calc
+            team_obj = next((t for t in teams if t.name == car.team_name), None)
+            if team_obj:
+                car_avg = int((team_obj.engine + team_obj.aerodynamics +
+                               team_obj.chassis + team_obj.reliability) / 4)
+                morale = check_driver_morale(
+                    car.driver_name, 75, pos, car_avg,
+                    races_done=league.current_race if league else 1
+                )
+                if morale["message"]:
+                    morale_alerts.append(morale["message"])
+
+            # Radio moments
+            if car.has_fastest_lap:
+                radio_highlights.append(get_radio_message("fastest_lap", car.driver_name))
+            if car.is_dnf:
+                radio_highlights.append(get_radio_message("dnf", car.driver_name))
+            elif pos == 1:
+                radio_highlights.append(get_radio_message("win", car.driver_name))
+            elif pos <= 3:
+                radio_highlights.append(get_radio_message("podium", car.driver_name, pos))
+
+        # Press conference — pick 1 random question for the race winner
+        press_question = None
+        winner = next((c for c in result["results"] if not c.is_dnf), None)
+        if winner:
+            press_question = get_press_conference_question()
+
         # Format result for handler
         formatted_results = [
             {
@@ -982,6 +1019,13 @@ class RaceService:
             for car in result["results"]
         ]
 
+        # Sprint race flag from calendar
+        is_sprint_round = race_calendar_entry.get("sprint", False) if (
+            race_calendar_entry := next(
+                (r for r in settings.F1_CALENDAR if r["name"] == race.name), {}
+            )
+        ) else False
+
         return {
             "race_name": race.name,
             "circuit": race.circuit,
@@ -990,6 +1034,10 @@ class RaceService:
             "results": formatted_results,
             "events": result["events"],
             "staff_insights": result.get("staff_insights", {}),
+            "morale_alerts": morale_alerts,
+            "radio_highlights": radio_highlights[:4],  # max 4 radio msgs
+            "press_question": press_question,
+            "is_sprint_round": is_sprint_round,
         }
 
     # ── Private sub-methods ──────────────────────────────────────────────────
@@ -1243,15 +1291,50 @@ class RaceService:
         league.current_race = 0
         league.status = LeagueStatus.WAITING
 
-        # Age drivers
+        # ── Driver Ageing & Retirement ─────────────────────────────────────
         all_drivers_result = await self.db.execute(select(Driver))
+        retired_names = []
         for d in all_drivers_result.scalars().all():
             d.age += 1
-            # Improve young drivers
+
+            # Young drivers improve based on development_potential
             if d.age <= 25 and d.development_potential > 50:
                 improvement = int(d.development_potential / 20)
-                d.skill = min(99, d.skill + improvement)
-                d.pace = min(99, d.pace + improvement)
+                d.skill        = min(99, d.skill        + improvement)
+                d.pace         = min(99, d.pace         + improvement)
+                d.racecraft    = min(99, d.racecraft    + max(1, improvement // 2))
+                d.consistency  = min(99, d.consistency  + max(1, improvement // 3))
+                # development_potential decays slightly each year
+                d.development_potential = max(0, d.development_potential - 5)
+
+            # Peak drivers (26-32) — tiny stat drift ±1
+            elif 26 <= d.age <= 32:
+                import random as _r
+                d.skill = min(99, max(60, d.skill + _r.randint(-1, 1)))
+
+            # Veteran decline (33-37)
+            elif 33 <= d.age <= 37:
+                d.skill       = max(40, d.skill       - 1)
+                d.pace        = max(40, d.pace        - 1)
+                d.consistency = max(40, d.consistency - 1)
+                d.development_potential = max(0, d.development_potential - 10)
+
+            # Over 38 — near retirement
+            elif d.age >= 38:
+                d.skill       = max(30, d.skill       - 2)
+                d.pace        = max(30, d.pace        - 2)
+                d.consistency = max(30, d.consistency - 2)
+                d.development_potential = max(0, d.development_potential - 20)
+
+                # Retire if dev_potential hits 0 (random chance increases with age)
+                retire_chance = (d.age - 37) * 0.15  # 15% at 38, 30% at 39...
+                if d.development_potential <= 0 and _r.random() < min(0.9, retire_chance):
+                    if d.is_free_agent:  # only retire free agents (no active contract)
+                        retired_names.append(d.name)
+                        d.is_free_agent = False  # marks as retired (off market)
+
+        if retired_names:
+            logger.info(f"Season end — retired drivers: {', '.join(retired_names)}")
 
 
 # ─────────────────────────────────────────────

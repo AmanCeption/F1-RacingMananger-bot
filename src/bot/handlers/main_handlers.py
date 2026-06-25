@@ -208,7 +208,12 @@ async def cmd_team(message: Message):
         driver_text = ""
         for d in drivers:
             dr = d["driver"]
-            driver_text += f"\n  🏎️ {dr.name} ({dr.nationality}) | Skill: {dr.skill}/100"
+            dev_stars = "🌟" * (dr.development_potential // 25) if dr.age <= 25 else ""
+            growth_tag = f" <i>(🌱 Potential: {dr.development_potential}%)</i>" if dr.age <= 25 and dr.development_potential > 50 else ""
+            driver_text += (
+                f"\n  🏎️ {dr.name} ({dr.nationality}, Age {dr.age}){dev_stars}\n"
+                f"     Skill: {dr.skill} | Pace: {dr.pace} | Consistency: {dr.consistency}{growth_tag}"
+            )
 
         if not driver_text:
             driver_text = "\n  ⚠️ No drivers signed!"
@@ -296,10 +301,23 @@ async def upgrade_stat(callback: CallbackQuery):
         try:
             success = await TeamService(db).upgrade_car(team_id, stat, 3, cost)
             if success:
+                # Re-fetch team to show updated stats
+                team = await TeamService(db).get(team_id)
+                new_val = getattr(team, stat, 0) if team else 0
+                car_rating = (team.engine + team.aerodynamics + team.chassis +
+                              team.reliability + team.tyres + team.pit_crew) // 6 if team else 0
                 await callback.message.edit_text(
                     f"✅ <b>Upgrade Complete!</b>\n\n"
-                    f"{stat_labels.get(stat, stat)} upgraded by +3!\n"
-                    f"Cost: ${cost:,}",
+                    f"{stat_labels.get(stat, stat)}: <b>{new_val - 3} → {new_val}/100</b> (+3)\n"
+                    f"💸 Cost: <b>${cost:,}</b>\n"
+                    f"💰 Remaining Budget: <b>${team.budget:,}</b>\n\n"
+                    f"🚗 <b>Updated Car Stats:</b>\n"
+                    f"  ⚙️ Engine: {team.engine} | 🌬️ Aero: {team.aerodynamics}\n"
+                    f"  🏗️ Chassis: {team.chassis} | 🔧 Reliability: {team.reliability}\n"
+                    f"  🛞 Tyres: {team.tyres} | 🔩 Pit Crew: {team.pit_crew}\n"
+                    f"  📊 Overall Rating: <b>{car_rating}/100</b>\n\n"
+                    f"<i>Use /upgrade to continue developing your car.</i>",
+                    reply_markup=upgrade_menu_kb(team_id),
                 )
                 await callback.answer("✅ Upgraded!")
             else:
@@ -1947,7 +1965,7 @@ async def cmd_runrace(message: Message):
             reply_markup=kb,
         )
 
-    # ── PRIVATE STAFF INSIGHTS ─────────────────────────────────────────
+    # ── PRIVATE STAFF INSIGHTS / POST-RACE DEBRIEF ───────────────────
     staff_insights = result.get("staff_insights", {})
     if staff_insights:
         from sqlalchemy import select as sa_select2
@@ -1961,7 +1979,30 @@ async def cmd_runrace(message: Message):
             insight_text = staff_insights.get(t.id)
             if insight_text and t.owner_id:
                 try:
-                    await message.bot.send_message(t.owner_id, insight_text, parse_mode="HTML")
+                    # Find this team's race result for context
+                    team_result_entry = next(
+                        (r for r in result.get("results", []) if r.get("team_id") == t.id),
+                        None
+                    )
+                    pos_line = ""
+                    if team_result_entry:
+                        pos = team_result_entry.get("position")
+                        pts = team_result_entry.get("points", 0)
+                        if team_result_entry.get("dnf"):
+                            pos_line = f"\n📋 Result: <b>DNF</b> — {team_result_entry.get('dnf_reason', 'Mechanical')}"
+                        elif pos:
+                            medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+                            pos_line = f"\n📋 Result: <b>{medals.get(pos, f'P{pos}')}</b> — {pts} pts"
+
+                    debrief_header = (
+                        f"📊 <b>Post-Race Debrief — {safe(race_name)}</b>{pos_line}\n"
+                        f"{'─' * 30}\n\n"
+                    )
+                    await message.bot.send_message(
+                        t.owner_id,
+                        debrief_header + insight_text,
+                        parse_mode="HTML"
+                    )
                 except Exception:
                     pass
 

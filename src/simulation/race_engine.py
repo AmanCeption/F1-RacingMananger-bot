@@ -11,6 +11,11 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+try:
+    from src.core.config import CIRCUIT_DNA
+except ImportError:
+    CIRCUIT_DNA = {}
+
 
 class Weather(str, Enum):
     SUNNY = "sunny"
@@ -108,10 +113,14 @@ def generate_weather() -> Weather:
     return random.choices(list(weights.keys()), weights=list(weights.values()))[0]
 
 
-def calculate_base_laptime(car: CarEntry, weather: Weather) -> float:
-    """Calculate base lap time in seconds. Lower = faster"""
-    # Car performance (avg of key stats)
-    car_perf = (car.engine * 0.25 + car.aerodynamics * 0.20 +
+def calculate_base_laptime(car: CarEntry, weather: Weather, dna: dict | None = None) -> float:
+    """Calculate base lap time in seconds. Lower = faster. dna = CIRCUIT_DNA entry."""
+    dna = dna or {}
+    engine_mod  = dna.get("engine_mod", 1.0)
+    tyre_stress = dna.get("tyre_stress", 1.0)
+
+    # Car performance — engine boosted/penalised by circuit DNA
+    car_perf = (car.engine * 0.25 * engine_mod + car.aerodynamics * 0.20 +
                 car.chassis * 0.20 + car.reliability * 0.10 +
                 car.tyre_mgmt * 0.15 + car.pit_crew * 0.10)
 
@@ -133,7 +142,7 @@ def calculate_base_laptime(car: CarEntry, weather: Weather) -> float:
     tyre_effect = tyre_pace * weather_bonus
 
     # Wear degradation
-    degradation = car.tyre_wear * (1.0 + (100 - car.tyre_mgmt) / 200)
+    degradation = car.tyre_wear * (1.0 + (100 - car.tyre_mgmt) / 200) * tyre_stress
     tyre_time_penalty = degradation * 8.0  # seconds per lap added by wear
 
     # Setup effects
@@ -211,7 +220,7 @@ def choose_next_tyre(car: CarEntry, weather: Weather, laps_remaining: int) -> st
         return "hard" if car.strategy == "conservative" else "medium"
 
 
-def simulate_overtake(attacker: CarEntry, defender: CarEntry, weather: Weather) -> bool:
+def simulate_overtake(attacker: CarEntry, defender: CarEntry, weather: Weather, overtaking_mod: float = 1.0) -> bool:
     """Determine if attacker can overtake defender"""
     attack_score = attacker.overtaking * 0.5 + attacker.pace * 0.3 + attacker.racecraft * 0.2
     defend_score = defender.defence * 0.5 + defender.consistency * 0.3 + defender.racecraft * 0.2
@@ -224,7 +233,7 @@ def simulate_overtake(attacker: CarEntry, defender: CarEntry, weather: Weather) 
     # Time gap effect (DRS-like)
     gap_bonus = max(0, (1.0 - attacker.gap_to_leader) * 20)
 
-    total_attack = attack_score + car_gap * 0.3 + gap_bonus + random.gauss(0, 10)
+    total_attack = (attack_score + car_gap * 0.3 + gap_bonus + random.gauss(0, 10)) * overtaking_mod
     total_defend = defend_score + random.gauss(0, 10)
 
     return total_attack > total_defend
@@ -235,6 +244,7 @@ def simulate_race(
     circuit_name: str,
     total_laps: int,
     weather: Weather | None = None,
+    race_name: str = "",
 ) -> dict:
     """
     Full race simulation.
@@ -248,6 +258,10 @@ def simulate_race(
     """
     if weather is None:
         weather = generate_weather()
+
+    # Circuit DNA — traits that affect simulation
+    dna = CIRCUIT_DNA.get(race_name, {})
+    overtaking_mod = dna.get("overtaking_mod", 1.0)
 
     events = []
     sc_active = False
@@ -349,7 +363,7 @@ def simulate_race(
             car.tyre_age += 1
 
             # Lap time
-            lap_time = calculate_base_laptime(car, weather)
+            lap_time = calculate_base_laptime(car, weather, dna)
             if sc_active or vsc_active:
                 lap_time *= 1.25  # slower behind SC
 
@@ -382,7 +396,7 @@ def simulate_race(
                 if random.random() < 0.3:
                     attacker = active_cars[i + 1]
                     defender = active_cars[i]
-                    if simulate_overtake(attacker, defender, weather):
+                    if simulate_overtake(attacker, defender, weather, overtaking_mod):
                         # Swap times (overtake)
                         attacker.total_time, defender.total_time = (
                             defender.total_time + 0.1, attacker.total_time

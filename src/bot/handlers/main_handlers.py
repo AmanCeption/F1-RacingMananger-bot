@@ -423,6 +423,20 @@ async def cmd_practice(message: Message):
             await message.answer("⏳ No upcoming races.")
             return
 
+        from src.models.models import RaceStatus
+        if race.status == RaceStatus.QUALIFYING:
+            await message.answer(
+                f"✅ <b>Qualifying already done</b> for <b>{race.name}</b>!\n\n"
+                f"🚦 Use /runrace to start the race."
+            )
+            return
+        if race.status in (RaceStatus.RACING, RaceStatus.FINISHED):
+            await message.answer(
+                f"✅ <b>{race.name}</b> is already completed!\n\n"
+                f"🏆 Use /standings to see results."
+            )
+            return
+
         from src.simulation.race_engine import generate_practice_report, generate_weather, CarEntry
         from src.simulation.race_engine import Weather
 
@@ -478,8 +492,27 @@ async def cmd_qualifying(message: Message):
             return
 
         await message.answer("⏱️ Running Q1/Q2/Q3 qualifying session... please wait.")
-        result = await RaceService(db).run_qualifying(team.league_id)
-        await db.commit()
+        try:
+            result = await RaceService(db).run_qualifying(team.league_id)
+            await db.commit()
+        except ValueError as e:
+            err = str(e)
+            if err.startswith("ALREADY_QUALIFIED:"):
+                race_name = err.split(":", 1)[1]
+                await message.answer(
+                    f"✅ <b>Qualifying already completed</b> for <b>{safe(race_name)}</b>!\n\n"
+                    f"🚦 Grid is already set. Use /runrace to start the race."
+                )
+            elif err.startswith("ALREADY_FINISHED:"):
+                race_name = err.split(":", 1)[1]
+                await message.answer(
+                    f"🏁 <b>{safe(race_name)}</b> is already finished!\n\n"
+                    f"🏆 Use /standings to see the results."
+                )
+            else:
+                await message.answer(f"❌ Qualifying error: {err}")
+            return
+        result = result  # reassign for clarity
 
     if not result:
         await message.answer("❌ No upcoming race found, or season not started!")
@@ -1668,6 +1701,17 @@ async def cmd_runrace(message: Message):
         async with get_session() as db:
             result = await RaceService(db).run_race(league_id)
             await db.commit()
+    except ValueError as e:
+        err = str(e)
+        if err.startswith("ALREADY_FINISHED:"):
+            race_name = err.split(":", 1)[1]
+            await message.answer(
+                f"🏁 <b>{safe(race_name)}</b> is already finished!\n\n"
+                f"🏆 Use /standings to see the final results."
+            )
+        else:
+            await message.answer(f"❌ {err}")
+        return
     except Exception as e:
         logger.error(f"run_race failed: {e}", exc_info=True)
         await message.answer(f"❌ Race simulation error: {e}")

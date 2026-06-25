@@ -473,6 +473,8 @@ async def cmd_practice(message: Message):
 
         from src.simulation.race_engine import generate_practice_report, generate_weather, CarEntry
         from src.simulation.race_engine import Weather
+        from src.models.models import TeamStaff, Staff
+        from sqlalchemy import select as sa_select2
 
         data = await TeamService(db).get_with_drivers(team.id)
         if not data["drivers"]:
@@ -493,13 +495,34 @@ async def cmd_practice(message: Message):
             tyre_mgmt=team.tyres, pit_crew=team.pit_crew,
         )
 
-        report = generate_practice_report(car, weather)
-        # Practice also sets recommended tyre hint stored in race weather
+        # Fetch hired staff for pre-race inputs
+        staff_result = await db.execute(
+            sa_select2(TeamStaff, Staff)
+            .join(Staff, TeamStaff.staff_id == Staff.id)
+            .where(TeamStaff.team_id == team.id)
+        )
+        staff_list = staff_result.all()
+
+        report = generate_practice_report(
+            car, weather,
+            race_name=race.name,
+            circuit_name=race.circuit,
+            staff_list=staff_list if staff_list else None,
+        )
+
+        no_staff_tip = (
+            "\n\n💼 <b>Tip:</b> You have no staff hired! Use /staff to sign a Technical Director, "
+            "Race Engineer, Head of Strategy and more — they give you circuit-specific pre-race "
+            "insights and strategy recommendations every weekend."
+            if not staff_list else ""
+        )
+
         await message.answer(
             f"🔄 <b>Practice Session — {race.name}</b>\n"
             f"Circuit: {race.circuit}  {race.country}\n"
             f"Driver: {driver.name}\n\n"
             + report
+            + no_staff_tip
             + f"\n\n💡 <b>Next step:</b> /qualifying — Run Q1/Q2/Q3 to set the grid!"
         )
 

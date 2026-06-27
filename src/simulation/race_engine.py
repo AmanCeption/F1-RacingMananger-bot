@@ -1165,6 +1165,15 @@ def generate_staff_practice_inputs(
     sc_prob = random.randint(10, 50) + (15 if weather_volatile else 0)
     sc_plan = "keep an extra soft set ready for SC restart" if sc_prob > 35 else "standard plan — SC unlikely"
 
+    undercut_note_options = [
+        "Undercut is likely the dominant strategy — pit 2 laps before rivals",
+        "Overcut viable if tyre delta opens up — monitor closely",
+        "Track position matters here — defend on fresh tyres if possible",
+        "Rival pit windows will be key — react to what's in front",
+        "We have the pace to undercut — commit early if the window opens",
+    ]
+    undercut_note = random.choice(undercut_note_options)
+
     weather_strategy_note = (
         f"In {weather_str}, intermediates may open a free stop window"
         if weather in [Weather.LIGHT_RAIN, Weather.MIXED]
@@ -1369,6 +1378,7 @@ def generate_staff_practice_inputs(
         "sc_prob": sc_prob,
         "sc_plan": sc_plan,
         "decision_lap": decision_lap,
+        "undercut_note": undercut_note,
         "strategy_headline": strategy_plan,
         "pit_window_note": f"Pit window: lap {decision_lap}–{decision_lap + 4}",
         "tyre_order": tyre_order,

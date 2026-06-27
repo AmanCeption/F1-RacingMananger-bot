@@ -18,6 +18,7 @@ from src.core.scheduler import setup_scheduler
 from src.bot.handlers import register_all_handlers
 from src.bot.middleware.auth import AuthMiddleware
 from src.bot.middleware.anti_cheat import AntiCheatMiddleware
+from src.bot.middleware.private_only import PrivateOnlyMiddleware
 from src.bot.middleware.logging import LoggingMiddleware
 from src.utils.logger import setup_logging
 from sqlalchemy import text
@@ -149,6 +150,7 @@ async def run_bot():
 
     dp = Dispatcher(storage=storage)
 
+    dp.message.middleware(PrivateOnlyMiddleware())  # must be first — blocks group cmds
     dp.message.middleware(LoggingMiddleware())
     dp.message.middleware(AuthMiddleware())
     dp.message.middleware(AntiCheatMiddleware())

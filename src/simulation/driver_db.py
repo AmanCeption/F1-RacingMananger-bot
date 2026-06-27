@@ -327,185 +327,86 @@ FICTIONAL_DRIVERS = [
 
 # Staff Database
 STAFF_DATABASE = [
-    # ══════════════════════════════════════════
-    # TEAM PRINCIPALS (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Toto Wolff", "role": "team_principal", "nationality": "Austrian",
-     "skill": 99, "salary": 15_000_000, "performance_bonus": 1.12, "is_real": True, "specialty": "leadership"},
-    {"name": "Christian Horner", "role": "team_principal", "nationality": "British",
-     "skill": 97, "salary": 14_000_000, "performance_bonus": 1.11, "is_real": True, "specialty": "leadership"},
-    {"name": "Frederic Vasseur", "role": "team_principal", "nationality": "French",
-     "skill": 91, "salary": 10_000_000, "performance_bonus": 1.07, "is_real": True, "specialty": "driver_development"},
-    {"name": "Zak Brown", "role": "team_principal", "nationality": "American",
-     "skill": 88, "salary": 9_000_000, "performance_bonus": 1.06, "is_real": True, "specialty": "commercial"},
-    {"name": "Andrea Stella", "role": "team_principal", "nationality": "Italian",
-     "skill": 93, "salary": 11_000_000, "performance_bonus": 1.08, "is_real": True, "specialty": "engineering"},
+
+    # ══════════════════════════════════════════════════════════════════
+    # 1. TEAM PRINCIPAL
+    # ══════════════════════════════════════════════════════════════════
+    # Real Legends
+    {"name": "Toto Wolff",         "role": "team_principal", "nationality": "Austrian",  "skill": 99, "salary": 15_000_000, "performance_bonus": 1.12, "is_real": True,  "specialty": "leadership"},
+    {"name": "Christian Horner",   "role": "team_principal", "nationality": "British",   "skill": 97, "salary": 14_000_000, "performance_bonus": 1.11, "is_real": True,  "specialty": "leadership"},
+    {"name": "Andrea Stella",      "role": "team_principal", "nationality": "Italian",   "skill": 94, "salary": 12_000_000, "performance_bonus": 1.09, "is_real": True,  "specialty": "engineering"},
+    {"name": "Frederic Vasseur",   "role": "team_principal", "nationality": "French",    "skill": 91, "salary": 10_000_000, "performance_bonus": 1.07, "is_real": True,  "specialty": "driver_development"},
+    {"name": "Zak Brown",          "role": "team_principal", "nationality": "American",  "skill": 88, "salary": 9_000_000,  "performance_bonus": 1.06, "is_real": True,  "specialty": "commercial"},
+    {"name": "Guenther Steiner",   "role": "team_principal", "nationality": "Italian",   "skill": 85, "salary": 7_500_000,  "performance_bonus": 1.05, "is_real": True,  "specialty": "leadership"},
+    {"name": "Mike Krack",         "role": "team_principal", "nationality": "Luxembourgish", "skill": 82, "salary": 6_500_000, "performance_bonus": 1.04, "is_real": True, "specialty": "engineering"},
+    {"name": "Ayao Komatsu",       "role": "team_principal", "nationality": "Japanese",  "skill": 83, "salary": 7_000_000,  "performance_bonus": 1.05, "is_real": True,  "specialty": "engineering"},
+    {"name": "Oliver Oakes",       "role": "team_principal", "nationality": "British",   "skill": 80, "salary": 6_000_000,  "performance_bonus": 1.04, "is_real": True,  "specialty": "commercial"},
+    {"name": "Laurent Mekies",     "role": "team_principal", "nationality": "French",    "skill": 86, "salary": 8_000_000,  "performance_bonus": 1.05, "is_real": True,  "specialty": "engineering"},
     # Fictional TPs
-    {"name": "Adrian Clarke", "role": "team_principal", "nationality": "British",
-     "skill": 85, "salary": 7_000_000, "performance_bonus": 1.05, "is_real": False, "specialty": "leadership"},
-    {"name": "Marco Villanueva", "role": "team_principal", "nationality": "Spanish",
-     "skill": 82, "salary": 6_000_000, "performance_bonus": 1.04, "is_real": False, "specialty": "commercial"},
-    {"name": "Sophie Laurent", "role": "team_principal", "nationality": "French",
-     "skill": 79, "salary": 5_000_000, "performance_bonus": 1.03, "is_real": False, "specialty": "driver_development"},
+    {"name": "Adrian Clarke",      "role": "team_principal", "nationality": "British",   "skill": 78, "salary": 5_500_000,  "performance_bonus": 1.04, "is_real": False, "specialty": "leadership"},
+    {"name": "Marco Villanueva",   "role": "team_principal", "nationality": "Spanish",   "skill": 74, "salary": 4_500_000,  "performance_bonus": 1.03, "is_real": False, "specialty": "commercial"},
+    {"name": "Sophie Laurent",     "role": "team_principal", "nationality": "French",    "skill": 71, "salary": 3_800_000,  "performance_bonus": 1.02, "is_real": False, "specialty": "driver_development"},
+    {"name": "James Whitmore",     "role": "team_principal", "nationality": "Australian","skill": 68, "salary": 3_200_000,  "performance_bonus": 1.02, "is_real": False, "specialty": "commercial"},
+    {"name": "Valentina Cruz",     "role": "team_principal", "nationality": "Brazilian", "skill": 65, "salary": 2_800_000,  "performance_bonus": 1.01, "is_real": False, "specialty": "leadership"},
 
-    # ══════════════════════════════════════════
-    # TECHNICAL DIRECTORS (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Adrian Newey", "role": "technical_director", "nationality": "British",
-     "skill": 100, "salary": 20_000_000, "performance_bonus": 1.15, "is_real": True, "specialty": "aero"},
-    {"name": "James Allison", "role": "technical_director", "nationality": "British",
-     "skill": 96, "salary": 14_000_000, "performance_bonus": 1.11, "is_real": True, "specialty": "chassis"},
-    {"name": "Enrico Cardile", "role": "technical_director", "nationality": "Italian",
-     "skill": 92, "salary": 11_000_000, "performance_bonus": 1.08, "is_real": True, "specialty": "aero"},
-    {"name": "Pat Fry", "role": "technical_director", "nationality": "British",
-     "skill": 89, "salary": 9_500_000, "performance_bonus": 1.07, "is_real": True, "specialty": "chassis"},
-    {"name": "Mike Elliott", "role": "technical_director", "nationality": "British",
-     "skill": 87, "salary": 8_500_000, "performance_bonus": 1.06, "is_real": True, "specialty": "power_unit"},
+    # ══════════════════════════════════════════════════════════════════
+    # 2. TECHNICAL DIRECTOR
+    # ══════════════════════════════════════════════════════════════════
+    # Real Legends
+    {"name": "Adrian Newey",       "role": "technical_director", "nationality": "British",   "skill": 100, "salary": 20_000_000, "performance_bonus": 1.15, "is_real": True,  "specialty": "aero"},
+    {"name": "James Allison",      "role": "technical_director", "nationality": "British",   "skill": 96,  "salary": 14_000_000, "performance_bonus": 1.11, "is_real": True,  "specialty": "chassis"},
+    {"name": "Enrico Cardile",     "role": "technical_director", "nationality": "Italian",   "skill": 92,  "salary": 11_000_000, "performance_bonus": 1.08, "is_real": True,  "specialty": "aero"},
+    {"name": "Pat Fry",            "role": "technical_director", "nationality": "British",   "skill": 89,  "salary": 9_500_000,  "performance_bonus": 1.07, "is_real": True,  "specialty": "chassis"},
+    {"name": "Mike Elliott",       "role": "technical_director", "nationality": "British",   "skill": 87,  "salary": 8_500_000,  "performance_bonus": 1.06, "is_real": True,  "specialty": "power_unit"},
+    {"name": "David Sanchez",      "role": "technical_director", "nationality": "French",    "skill": 85,  "salary": 8_000_000,  "performance_bonus": 1.05, "is_real": True,  "specialty": "aero"},
+    {"name": "Jan Monchaux",       "role": "technical_director", "nationality": "French",    "skill": 83,  "salary": 7_500_000,  "performance_bonus": 1.05, "is_real": True,  "specialty": "chassis"},
+    {"name": "Loic Serra",         "role": "technical_director", "nationality": "French",    "skill": 86,  "salary": 8_200_000,  "performance_bonus": 1.06, "is_real": True,  "specialty": "chassis"},
+    {"name": "Jody Egginton",      "role": "technical_director", "nationality": "British",   "skill": 84,  "salary": 7_800_000,  "performance_bonus": 1.05, "is_real": True,  "specialty": "aero"},
     # Fictional TDs
-    {"name": "Dr. Hans Mueller", "role": "technical_director", "nationality": "German",
-     "skill": 84, "salary": 7_000_000, "performance_bonus": 1.05, "is_real": False, "specialty": "chassis"},
-    {"name": "Akira Yamamoto", "role": "technical_director", "nationality": "Japanese",
-     "skill": 81, "salary": 6_000_000, "performance_bonus": 1.04, "is_real": False, "specialty": "aero"},
-    {"name": "Elena Kowalski", "role": "technical_director", "nationality": "Polish",
-     "skill": 78, "salary": 5_000_000, "performance_bonus": 1.03, "is_real": False, "specialty": "reliability"},
+    {"name": "Dr. Hans Mueller",   "role": "technical_director", "nationality": "German",    "skill": 76,  "salary": 5_000_000,  "performance_bonus": 1.04, "is_real": False, "specialty": "chassis"},
+    {"name": "Akira Yamamoto",     "role": "technical_director", "nationality": "Japanese",  "skill": 73,  "salary": 4_200_000,  "performance_bonus": 1.03, "is_real": False, "specialty": "aero"},
+    {"name": "Elena Kowalski",     "role": "technical_director", "nationality": "Polish",    "skill": 70,  "salary": 3_500_000,  "performance_bonus": 1.02, "is_real": False, "specialty": "reliability"},
+    {"name": "Ravi Shankar",       "role": "technical_director", "nationality": "Indian",    "skill": 67,  "salary": 3_000_000,  "performance_bonus": 1.02, "is_real": False, "specialty": "power_unit"},
+    {"name": "Natasha Voronova",   "role": "technical_director", "nationality": "Russian",   "skill": 64,  "salary": 2_500_000,  "performance_bonus": 1.01, "is_real": False, "specialty": "aero"},
 
-    # ══════════════════════════════════════════
-    # CHIEF DESIGNERS (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Rob Marshall", "role": "chief_designer", "nationality": "British",
-     "skill": 95, "salary": 10_000_000, "performance_bonus": 1.09, "is_real": True, "specialty": "chassis"},
-    {"name": "Luca Furbatto", "role": "chief_designer", "nationality": "Italian",
-     "skill": 88, "salary": 7_500_000, "performance_bonus": 1.06, "is_real": True, "specialty": "aero"},
+    # ══════════════════════════════════════════════════════════════════
+    # 3. HEAD OF STRATEGY
+    # ══════════════════════════════════════════════════════════════════
+    # Real Legends
+    {"name": "Hannah Schmitz",     "role": "head_of_strategy", "nationality": "German",    "skill": 99, "salary": 8_000_000,  "performance_bonus": 1.10, "is_real": True,  "specialty": "strategy"},
+    {"name": "Bernie Collins",     "role": "head_of_strategy", "nationality": "Irish",     "skill": 94, "salary": 6_500_000,  "performance_bonus": 1.08, "is_real": True,  "specialty": "strategy"},
+    {"name": "Alan Permane",       "role": "head_of_strategy", "nationality": "British",   "skill": 91, "salary": 5_500_000,  "performance_bonus": 1.07, "is_real": True,  "specialty": "strategy"},
+    {"name": "Ron Meadows",        "role": "head_of_strategy", "nationality": "British",   "skill": 93, "salary": 6_000_000,  "performance_bonus": 1.07, "is_real": True,  "specialty": "regulations"},
+    {"name": "Antonio Spagnolo",   "role": "head_of_strategy", "nationality": "Italian",   "skill": 88, "salary": 5_000_000,  "performance_bonus": 1.06, "is_real": True,  "specialty": "strategy"},
+    {"name": "Ruth Buscombe",      "role": "head_of_strategy", "nationality": "British",   "skill": 87, "salary": 4_800_000,  "performance_bonus": 1.06, "is_real": True,  "specialty": "strategy"},
+    {"name": "Ciaron Pilbeam",     "role": "head_of_strategy", "nationality": "British",   "skill": 86, "salary": 4_500_000,  "performance_bonus": 1.05, "is_real": True,  "specialty": "strategy"},
     # Fictional
-    {"name": "Chen Wei", "role": "chief_designer", "nationality": "Chinese",
-     "skill": 82, "salary": 5_500_000, "performance_bonus": 1.04, "is_real": False, "specialty": "chassis"},
-    {"name": "Ingrid Holmgren", "role": "chief_designer", "nationality": "Swedish",
-     "skill": 78, "salary": 4_500_000, "performance_bonus": 1.03, "is_real": False, "specialty": "aero"},
+    {"name": "Lucia Romano",       "role": "head_of_strategy", "nationality": "Italian",   "skill": 78, "salary": 3_200_000,  "performance_bonus": 1.04, "is_real": False, "specialty": "strategy"},
+    {"name": "James Caldwell",     "role": "head_of_strategy", "nationality": "Australian","skill": 74, "salary": 2_800_000,  "performance_bonus": 1.03, "is_real": False, "specialty": "strategy"},
+    {"name": "Mei Lin",            "role": "head_of_strategy", "nationality": "Chinese",   "skill": 70, "salary": 2_400_000,  "performance_bonus": 1.03, "is_real": False, "specialty": "strategy"},
+    {"name": "Kofi Asante",        "role": "head_of_strategy", "nationality": "Ghanaian",  "skill": 66, "salary": 2_000_000,  "performance_bonus": 1.02, "is_real": False, "specialty": "strategy"},
+    {"name": "Priya Kapoor",       "role": "head_of_strategy", "nationality": "Indian",    "skill": 63, "salary": 1_700_000,  "performance_bonus": 1.01, "is_real": False, "specialty": "regulations"},
 
-    # ══════════════════════════════════════════
-    # HEAD OF AERODYNAMICS (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Peter Prodromou", "role": "head_of_aerodynamics", "nationality": "British",
-     "skill": 96, "salary": 9_000_000, "performance_bonus": 1.10, "is_real": True, "specialty": "aero"},
-    {"name": "Dirk de Beer", "role": "head_of_aerodynamics", "nationality": "South African",
-     "skill": 88, "salary": 6_500_000, "performance_bonus": 1.07, "is_real": True, "specialty": "aero"},
+    # ══════════════════════════════════════════════════════════════════
+    # 4. CHIEF RACE ENGINEER  (Race Engineer umbrella)
+    # ══════════════════════════════════════════════════════════════════
+    # Real Legends
+    {"name": "Peter Bonnington",   "role": "chief_race_engineer", "nationality": "British",  "skill": 99, "salary": 9_000_000,  "performance_bonus": 1.11, "is_real": True,  "specialty": "strategy"},
+    {"name": "Gianpiero Lambiase", "role": "chief_race_engineer", "nationality": "Italian",  "skill": 98, "salary": 8_500_000,  "performance_bonus": 1.10, "is_real": True,  "specialty": "strategy"},
+    {"name": "Riccardo Adami",     "role": "chief_race_engineer", "nationality": "Italian",  "skill": 92, "salary": 6_000_000,  "performance_bonus": 1.07, "is_real": True,  "specialty": "strategy"},
+    {"name": "Tom Stallard",       "role": "chief_race_engineer", "nationality": "British",  "skill": 89, "salary": 5_200_000,  "performance_bonus": 1.06, "is_real": True,  "specialty": "strategy"},
+    {"name": "Xavi Marcos",        "role": "chief_race_engineer", "nationality": "Spanish",  "skill": 87, "salary": 4_800_000,  "performance_bonus": 1.06, "is_real": True,  "specialty": "setup"},
+    {"name": "Marco Matassa",      "role": "chief_race_engineer", "nationality": "Italian",  "skill": 86, "salary": 4_500_000,  "performance_bonus": 1.05, "is_real": True,  "specialty": "strategy"},
+    {"name": "Gary Gannon",        "role": "chief_race_engineer", "nationality": "British",  "skill": 84, "salary": 4_200_000,  "performance_bonus": 1.05, "is_real": True,  "specialty": "setup"},
+    {"name": "Hugh Bird",          "role": "chief_race_engineer", "nationality": "British",  "skill": 83, "salary": 4_000_000,  "performance_bonus": 1.04, "is_real": True,  "specialty": "tyres"},
+    {"name": "Will Joseph",        "role": "chief_race_engineer", "nationality": "British",  "skill": 81, "salary": 3_700_000,  "performance_bonus": 1.04, "is_real": True,  "specialty": "strategy"},
     # Fictional
-    {"name": "Prof. Yuki Sato", "role": "head_of_aerodynamics", "nationality": "Japanese",
-     "skill": 84, "salary": 5_500_000, "performance_bonus": 1.06, "is_real": False, "specialty": "aero"},
-    {"name": "Claire Dubois", "role": "head_of_aerodynamics", "nationality": "French",
-     "skill": 80, "salary": 4_200_000, "performance_bonus": 1.04, "is_real": False, "specialty": "aero"},
-    {"name": "Stefan Richter", "role": "head_of_aerodynamics", "nationality": "German",
-     "skill": 76, "salary": 3_500_000, "performance_bonus": 1.03, "is_real": False, "specialty": "aero"},
+    {"name": "Michael Barnes",     "role": "chief_race_engineer", "nationality": "British",  "skill": 74, "salary": 2_800_000,  "performance_bonus": 1.03, "is_real": False, "specialty": "strategy"},
+    {"name": "Francesca Rossi",    "role": "chief_race_engineer", "nationality": "Italian",  "skill": 70, "salary": 2_400_000,  "performance_bonus": 1.03, "is_real": False, "specialty": "strategy"},
+    {"name": "David Kim",          "role": "chief_race_engineer", "nationality": "Korean",   "skill": 66, "salary": 2_000_000,  "performance_bonus": 1.02, "is_real": False, "specialty": "setup"},
+    {"name": "Thomas Wagner",      "role": "chief_race_engineer", "nationality": "German",   "skill": 63, "salary": 1_700_000,  "performance_bonus": 1.02, "is_real": False, "specialty": "tyres"},
+    {"name": "Luis Peralta",       "role": "chief_race_engineer", "nationality": "Mexican",  "skill": 60, "salary": 1_400_000,  "performance_bonus": 1.01, "is_real": False, "specialty": "setup"},
 
-    # ══════════════════════════════════════════
-    # AERODYNAMICIST
-    # ══════════════════════════════════════════
-    {"name": "Ana Martinez", "role": "aerodynamicist", "nationality": "Spanish",
-     "skill": 81, "salary": 2_800_000, "performance_bonus": 1.04, "is_real": False, "specialty": "aero"},
-    {"name": "Raj Patel", "role": "aerodynamicist", "nationality": "Indian",
-     "skill": 77, "salary": 2_400_000, "performance_bonus": 1.03, "is_real": False, "specialty": "aero"},
-    {"name": "Emma Lindqvist", "role": "aerodynamicist", "nationality": "Swedish",
-     "skill": 73, "salary": 2_000_000, "performance_bonus": 1.02, "is_real": False, "specialty": "aero"},
-
-    # ══════════════════════════════════════════
-    # CHIEF RACE ENGINEERS (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Peter Bonnington", "role": "chief_race_engineer", "nationality": "British",
-     "skill": 98, "salary": 8_000_000, "performance_bonus": 1.10, "is_real": True, "specialty": "strategy"},
-    {"name": "Gianpiero Lambiase", "role": "chief_race_engineer", "nationality": "Italian",
-     "skill": 97, "salary": 7_500_000, "performance_bonus": 1.09, "is_real": True, "specialty": "strategy"},
-    {"name": "Riccardo Adami", "role": "chief_race_engineer", "nationality": "Italian",
-     "skill": 91, "salary": 5_500_000, "performance_bonus": 1.07, "is_real": True, "specialty": "strategy"},
-    {"name": "Tom Stallard", "role": "chief_race_engineer", "nationality": "British",
-     "skill": 88, "salary": 4_800_000, "performance_bonus": 1.06, "is_real": True, "specialty": "strategy"},
-    # Fictional
-    {"name": "Michael Barnes", "role": "chief_race_engineer", "nationality": "British",
-     "skill": 84, "salary": 3_800_000, "performance_bonus": 1.05, "is_real": False, "specialty": "strategy"},
-    {"name": "Francesca Rossi", "role": "chief_race_engineer", "nationality": "Italian",
-     "skill": 79, "salary": 3_000_000, "performance_bonus": 1.04, "is_real": False, "specialty": "strategy"},
-
-    # ══════════════════════════════════════════
-    # RACE ENGINEERS
-    # ══════════════════════════════════════════
-    {"name": "David Kim", "role": "race_engineer", "nationality": "South Korean",
-     "skill": 82, "salary": 2_200_000, "performance_bonus": 1.04, "is_real": False, "specialty": "setup"},
-    {"name": "Thomas Wagner", "role": "race_engineer", "nationality": "German",
-     "skill": 78, "salary": 1_800_000, "performance_bonus": 1.03, "is_real": False, "specialty": "tyres"},
-    {"name": "Luis Peralta", "role": "race_engineer", "nationality": "Mexican",
-     "skill": 75, "salary": 1_600_000, "performance_bonus": 1.02, "is_real": False, "specialty": "setup"},
-    {"name": "Haruto Nakamura", "role": "race_engineer", "nationality": "Japanese",
-     "skill": 72, "salary": 1_400_000, "performance_bonus": 1.02, "is_real": False, "specialty": "tyres"},
-
-    # ══════════════════════════════════════════
-    # PIT CREW CHIEFS (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Phil Turner", "role": "pit_crew_chief", "nationality": "British",
-     "skill": 96, "salary": 3_000_000, "performance_bonus": 1.12, "is_real": True, "specialty": "pit_speed"},
-    {"name": "Marcos Azar", "role": "pit_crew_chief", "nationality": "Brazilian",
-     "skill": 91, "salary": 2_200_000, "performance_bonus": 1.09, "is_real": True, "specialty": "pit_speed"},
-    # Fictional
-    {"name": "Big Dave Thompson", "role": "pit_crew_chief", "nationality": "British",
-     "skill": 88, "salary": 1_800_000, "performance_bonus": 1.07, "is_real": False, "specialty": "pit_speed"},
-    {"name": "Carlos Reyes", "role": "pit_crew_chief", "nationality": "Mexican",
-     "skill": 84, "salary": 1_500_000, "performance_bonus": 1.06, "is_real": False, "specialty": "pit_speed"},
-    {"name": "Bruno Silva", "role": "pit_crew_chief", "nationality": "Brazilian",
-     "skill": 80, "salary": 1_200_000, "performance_bonus": 1.04, "is_real": False, "specialty": "pit_speed"},
-    {"name": "Jin-ho Park", "role": "pit_crew_chief", "nationality": "South Korean",
-     "skill": 75, "salary": 1_000_000, "performance_bonus": 1.03, "is_real": False, "specialty": "pit_speed"},
-
-    # ══════════════════════════════════════════
-    # SPORTING DIRECTORS (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Ron Meadows", "role": "sporting_director", "nationality": "British",
-     "skill": 94, "salary": 6_000_000, "performance_bonus": 1.07, "is_real": True, "specialty": "regulations"},
-    {"name": "Alan Permane", "role": "sporting_director", "nationality": "British",
-     "skill": 90, "salary": 5_000_000, "performance_bonus": 1.06, "is_real": True, "specialty": "strategy"},
-    # Fictional
-    {"name": "Diego Morales", "role": "sporting_director", "nationality": "Argentine",
-     "skill": 83, "salary": 3_800_000, "performance_bonus": 1.04, "is_real": False, "specialty": "regulations"},
-    {"name": "Priya Kapoor", "role": "sporting_director", "nationality": "Indian",
-     "skill": 78, "salary": 3_200_000, "performance_bonus": 1.03, "is_real": False, "specialty": "strategy"},
-
-    # ══════════════════════════════════════════
-    # POWER UNIT DIRECTORS (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Ben Hodgkinson", "role": "power_unit_director", "nationality": "British",
-     "skill": 93, "salary": 9_000_000, "performance_bonus": 1.08, "is_real": True, "specialty": "power_unit"},
-    {"name": "Yusuke Hasegawa", "role": "power_unit_director", "nationality": "Japanese",
-     "skill": 90, "salary": 8_000_000, "performance_bonus": 1.07, "is_real": True, "specialty": "power_unit"},
-    # Fictional
-    {"name": "Klaus Bergmann", "role": "power_unit_director", "nationality": "German",
-     "skill": 85, "salary": 6_000_000, "performance_bonus": 1.05, "is_real": False, "specialty": "power_unit"},
-    {"name": "Sven Andersen", "role": "power_unit_director", "nationality": "Finnish",
-     "skill": 80, "salary": 5_000_000, "performance_bonus": 1.04, "is_real": False, "specialty": "power_unit"},
-
-    # ══════════════════════════════════════════
-    # HEAD OF STRATEGY (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Hannah Schmitz", "role": "head_of_strategy", "nationality": "German",
-     "skill": 98, "salary": 7_000_000, "performance_bonus": 1.09, "is_real": True, "specialty": "strategy"},
-    {"name": "Bernie Collins", "role": "head_of_strategy", "nationality": "Irish",
-     "skill": 92, "salary": 5_500_000, "performance_bonus": 1.07, "is_real": True, "specialty": "strategy"},
-    # Fictional
-    {"name": "Lucia Romano", "role": "head_of_strategy", "nationality": "Italian",
-     "skill": 86, "salary": 4_200_000, "performance_bonus": 1.05, "is_real": False, "specialty": "strategy"},
-    {"name": "James Caldwell", "role": "head_of_strategy", "nationality": "Australian",
-     "skill": 81, "salary": 3_500_000, "performance_bonus": 1.04, "is_real": False, "specialty": "strategy"},
-    {"name": "Mei Lin", "role": "head_of_strategy", "nationality": "Chinese",
-     "skill": 76, "salary": 2_800_000, "performance_bonus": 1.03, "is_real": False, "specialty": "strategy"},
-
-    # ══════════════════════════════════════════
-    # PERFORMANCE DIRECTORS (Real Legends)
-    # ══════════════════════════════════════════
-    {"name": "Andrew Shovlin", "role": "performance_director", "nationality": "British",
-     "skill": 95, "salary": 8_500_000, "performance_bonus": 1.08, "is_real": True, "specialty": "overall"},
-    {"name": "Xevi Pujolar", "role": "performance_director", "nationality": "Spanish",
-     "skill": 88, "salary": 6_000_000, "performance_bonus": 1.06, "is_real": True, "specialty": "overall"},
-    # Fictional
-    {"name": "Viktor Petrov", "role": "performance_director", "nationality": "Russian",
-     "skill": 82, "salary": 4_500_000, "performance_bonus": 1.04, "is_real": False, "specialty": "overall"},
-    {"name": "Amara Diallo", "role": "performance_director", "nationality": "Senegalese",
-     "skill": 77, "salary": 3_800_000, "performance_bonus": 1.03, "is_real": False, "specialty": "overall"},
 ]
 
 

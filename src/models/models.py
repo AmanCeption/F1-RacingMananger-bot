@@ -111,6 +111,7 @@ class League(Base):
     invite_code: Mapped[str] = mapped_column(String(16), unique=True)
     password: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=True)
+    group_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)  # Telegram group linked to this league
     status: Mapped[LeagueStatus] = mapped_column(SAEnum(LeagueStatus), default=LeagueStatus.WAITING)
     current_season: Mapped[int] = mapped_column(Integer, default=1)
     current_race: Mapped[int] = mapped_column(Integer, default=0)

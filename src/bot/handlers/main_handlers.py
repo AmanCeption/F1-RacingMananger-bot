@@ -12,15 +12,18 @@ from aiogram.fsm.state import State, StatesGroup
 from src.core.database.session import get_session
 from src.services.game_services import (
     UserService, TeamService, LeagueService, RaceService,
-    StandingsService, ResearchService, DriverMarketService, seed_database
+    StandingsService, ResearchService, DriverMarketService, SponsorService, seed_database
 )
 from src.bot.keyboards.keyboards import (
     main_menu_kb, team_menu_kb, upgrade_menu_kb, strategy_kb,
-    tyre_selection_kb, market_kb, league_kb, research_kb, pagination_kb
+    tyre_selection_kb, market_kb, league_kb, research_kb, pagination_kb,
+    sponsors_kb, sponsor_sign_kb, sponsor_terminate_kb
 )
 from src.core.config import settings, F1_POINTS
 from sqlalchemy import select, and_
-from src.models.models import Staff, TeamStaff, Team
+from src.models.models import Staff, TeamStaff, Team, Sponsor, TeamSponsor
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -2230,12 +2233,53 @@ async def cmd_daily(message: Message):
         return
 
     if result["available"]:
-        await message.answer(
+        streak = result.get("streak", 1)
+        multiplier = result.get("multiplier", 1.0)
+        milestone = result.get("milestone_bonus")
+
+        # Streak display
+        streak_bar = ""
+        for i in range(1, 8):
+            streak_bar += "🔥" if i <= streak else "⬜"
+
+        streak_labels = {
+            1: "Day 1 — Welcome back!",
+            2: "Day 2 — 1.2× Bonus!",
+            3: "Day 3 — 1.5× Bonus!",
+            4: "Day 4 — 1.8× Bonus! 🔥",
+            5: "Day 5 — 2.2× Bonus! 🔥🔥",
+            6: "Day 6 — 2.7× Bonus! 🔥🔥🔥",
+            7: "Day 7 — MAX STREAK 3.5× Bonus! 🏆",
+        }
+        streak_label = streak_labels.get(streak, f"Day {streak}")
+
+        text = (
             f"🎁 <b>Daily Reward Claimed!</b>\n\n"
+            f"🔥 <b>Login Streak: Day {streak}/7</b>\n"
+            f"{streak_bar}\n"
+            f"<i>{streak_label}</i>\n\n"
             f"💰 +${result['money']:,}\n"
-            f"🔬 +{result['rp']} Research Points\n\n"
-            f"Come back in 24 hours for your next reward!"
+            f"🔬 +{result['rp']} Research Points\n"
         )
+
+        if multiplier > 1.0:
+            text += f"⚡ Streak Multiplier: <b>{multiplier}×</b>\n"
+
+        if milestone:
+            text += (
+                f"\n🏆 <b>STREAK MILESTONE BONUS!</b>\n"
+                f"💰 +${milestone['money']:,}\n"
+                f"🔬 +{milestone['rp']} RP\n"
+                f"⭐ +{milestone['rep']} Reputation\n"
+            )
+
+        next_mult = {1: 1.2, 2: 1.5, 3: 1.8, 4: 2.2, 5: 2.7, 6: 3.5, 7: 1.0}.get(streak, 1.0)
+        if streak < 7:
+            text += f"\n<i>Come back tomorrow for Day {streak+1} ({next_mult}× multiplier)!</i>"
+        else:
+            text += f"\n<i>Max streak! Keep it up — resets to Day 1 tomorrow.</i>"
+
+        await message.answer(text)
     else:
         await message.answer(
             f"⏳ Already claimed today!\n\n"
@@ -2244,53 +2288,342 @@ async def cmd_daily(message: Message):
 
 
 # ─────────────────────────────────────────────
-# /sponsors — View and sign sponsors
+# /sponsors — Full Sponsor Management
 # ─────────────────────────────────────────────
 
 @router.message(Command("sponsors"))
 @router.message(F.text == "💰 Sponsors")
 async def cmd_sponsors(message: Message):
-    from src.simulation.driver_db import SPONSORS
+    from src.bot.keyboards.keyboards import sponsors_kb
     async with get_session() as db:
         team = await TeamService(db).get_by_owner(message.from_user.id)
         if not team:
             await message.answer("❌ Register first!")
             return
+        team_id = team.id
 
-        data = await TeamService(db).get_with_drivers(team.id)
-        active_sponsors = data.get("sponsors", [])
+    await message.answer(
+        f"💰 <b>Sponsor Management</b>\n\n"
+        f"Sponsors pay you every race — but only if you meet their targets.\n"
+        f"Fail 3 races in a row and they'll walk away! 😤\n\n"
+        f"What would you like to do?",
+        reply_markup=sponsors_kb(team_id)
+    )
 
-    text = "💰 <b>Sponsors</b>\n\n"
 
-    if active_sponsors:
-        text += "<b>Your Active Sponsors:</b>\n"
-        for sp_data in active_sponsors:
-            sp = sp_data["sponsor"]
-            contract = sp_data["contract"]
+@router.callback_query(F.data.startswith("sponsor:my:"))
+async def cb_my_sponsors(callback: CallbackQuery):
+    from src.services.game_services import SponsorService
+    team_id = int(callback.data.split(":")[2])
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Not registered!", show_alert=True)
+            return
+        data = await SponsorService(db).get_available_sponsors(team.id)
+
+    active = data.get("active", [])
+    tier_emoji = {"small": "🥉", "medium": "🥈", "premium": "🥇", "title": "👑"}
+
+    if not active:
+        text = (
+            "📋 <b>My Sponsors</b>\n\n"
+            "You have no active sponsors!\n\n"
+            "<i>Browse available sponsors to sign your first deal.</i>"
+        )
+    else:
+        text = "📋 <b>My Active Sponsors</b>\n\n"
+        for ts, sp in active:
+            emoji = tier_emoji.get(sp.tier, "🏷️")
+            races_left = ts.contract_races - ts.races_completed
+            req = f"Top {sp.target_position}" if sp.target_position else f"{sp.target_points}+ pts/race"
+
+            # Failure count from termination_reason temp field
+            fail_count = 0
+            if ts.termination_reason and ts.termination_reason.startswith("fails:"):
+                try:
+                    fail_count = int(ts.termination_reason.split(":")[1])
+                except Exception:
+                    fail_count = 0
+            fail_warning = ""
+            if fail_count == 1:
+                fail_warning = "\n  ⚠️ 1 miss — 2 more and they walk!"
+            elif fail_count == 2:
+                fail_warning = "\n  🚨 2 misses — ONE MORE and they terminate!"
+
             text += (
-                f"  🏷️ <b>{safe(sp.name)}</b> [{sp.tier.title()}]\n"
-                f"  Reward: ${sp.reward:,} | Races left: {sp.contract_races - contract.races_completed}\n\n"
+                f"{emoji} <b>{safe(sp.name)}</b> [{sp.tier.title()}]\n"
+                f"  💰 Reward: <b>${sp.reward:,}/race</b>\n"
+                f"  🎯 Target: <b>{req}</b>\n"
+                f"  ⚠️ Penalty if missed: <b>${sp.penalty:,}</b>\n"
+                f"  📋 Races left: <b>{races_left}</b>\n"
+                f"  💵 Total earned: <b>${ts.total_earned:,}</b>"
+                f"{fail_warning}\n\n"
+            )
+
+    from src.bot.keyboards.keyboards import sponsors_kb
+    await callback.message.edit_text(text, reply_markup=sponsors_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sponsor:browse:"))
+async def cb_browse_sponsors(callback: CallbackQuery):
+    from src.services.game_services import SponsorService
+    parts = callback.data.split(":")
+    team_id, page = int(parts[2]), int(parts[3])
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Not registered!", show_alert=True)
+            return
+        data = await SponsorService(db).get_available_sponsors(team.id)
+
+    available = data.get("available", [])
+    locked = data.get("locked", [])
+    tier_emoji = {"small": "🥉", "medium": "🥈", "premium": "🥇", "title": "👑"}
+    tier_desc = {
+        "small": "Small regional sponsor. Easy targets, low reward.",
+        "medium": "Mid-tier brand. Good pay if you perform consistently.",
+        "premium": "Major corporation. High reward, demanding targets.",
+        "title": "Title sponsor. Life-changing money, but you must WIN.",
+    }
+
+    text = f"🔍 <b>Available Sponsors</b>\n📊 Your Reputation: <b>{team.reputation}/100</b>\n\n"
+
+    if available:
+        text += "✅ <b>You Qualify For:</b>\n\n"
+        for sp in available:
+            emoji = tier_emoji.get(sp.tier, "🏷️")
+            req = f"Finish Top {sp.target_position}" if sp.target_position else f"Score {sp.target_points}+ pts"
+            text += (
+                f"{emoji} <b>{safe(sp.name)}</b>\n"
+                f"  <i>{tier_desc.get(sp.tier, '')}</i>\n"
+                f"  💰 <b>${sp.reward:,}/race</b> (5 races)\n"
+                f"  🎯 Requirement: <b>{req}</b>\n"
+                f"  ⚠️ Miss penalty: <b>${sp.penalty:,}</b>\n"
+                f"  Use: /signsponsor {sp.id}\n\n"
             )
     else:
-        text += "No active sponsors.\n\n"
+        text += "❌ No sponsors available at your reputation level.\n\n"
 
-    text += "<b>Available Sponsors:</b>\n"
+    if locked:
+        text += "🔒 <b>Locked (Need More Reputation):</b>\n\n"
+        for sp in locked[:5]:
+            emoji = tier_emoji.get(sp.tier, "🏷️")
+            text += (
+                f"{emoji} <b>{safe(sp.name)}</b> — Need <b>{sp.min_reputation}</b> rep "
+                f"(you have {team.reputation})\n"
+            )
+
+    from src.bot.keyboards.keyboards import sponsors_kb
+    await callback.message.edit_text(text, reply_markup=sponsors_kb(team_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sponsor:terminate_menu:"))
+async def cb_terminate_menu(callback: CallbackQuery):
+    from src.services.game_services import SponsorService
+    from src.bot.keyboards.keyboards import sponsor_terminate_kb, sponsors_kb
+    team_id = int(callback.data.split(":")[2])
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Not registered!", show_alert=True)
+            return
+        data = await SponsorService(db).get_available_sponsors(team.id)
+
+    active = data.get("active", [])
+    if not active:
+        await callback.answer("You have no active sponsors to terminate!", show_alert=True)
+        return
+
     tier_emoji = {"small": "🥉", "medium": "🥈", "premium": "🥇", "title": "👑"}
-    for sp in SPONSORS[:10]:
-        emoji = tier_emoji.get(sp.get("tier", "small"), "🏷️")
-        req = f"Top {sp['target_position']}" if sp.get("target_position") else f"{sp.get('target_points', 0)}+ pts"
+    text = "❌ <b>Terminate Sponsor Contract</b>\n\n"
+    text += "Select which sponsor to terminate:\n\n"
+
+    builder = InlineKeyboardBuilder()
+    for ts, sp in active:
+        emoji = tier_emoji.get(sp.tier, "🏷️")
+        races_left = ts.contract_races - ts.races_completed
+        exit_fee = int(sp.reward * races_left * 0.5)
         text += (
-            f"{emoji} <b>{safe(sp['name'])}</b>\n"
-            f"  ${sp['reward']:,} | Req: {req} | Min Rep: {sp.get('min_reputation', 0)}\n"
+            f"{emoji} <b>{safe(sp.name)}</b>\n"
+            f"  Races left: {races_left} | Early exit fee: ${exit_fee:,}\n\n"
         )
+        builder.row(
+            InlineKeyboardButton(
+                text=f"❌ Drop {sp.name}",
+                callback_data=f"sponsor:terminate_confirm:{team_id}:{sp.id}"
+            )
+        )
+    builder.row(InlineKeyboardButton(text="◀️ Back", callback_data=f"sponsor:my:{team_id}"))
 
-    text += "\n<i>Sponsors pay out automatically after each race based on performance.</i>"
-    await message.answer(text)
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sponsor:terminate_confirm:"))
+async def cb_terminate_confirm(callback: CallbackQuery):
+    from src.bot.keyboards.keyboards import sponsor_terminate_kb
+    parts = callback.data.split(":")
+    team_id, sponsor_id = int(parts[2]), int(parts[3])
+
+    async with get_session() as db:
+        sp_res = await db.execute(select(Sponsor).where(Sponsor.id == sponsor_id))
+        sp = sp_res.scalar_one_or_none()
+        if not sp:
+            await callback.answer("Sponsor not found!", show_alert=True)
+            return
+        ts_res = await db.execute(
+            select(TeamSponsor).where(
+                and_(TeamSponsor.team_id == team_id,
+                     TeamSponsor.sponsor_id == sponsor_id,
+                     TeamSponsor.is_active == True)
+            )
+        )
+        ts = ts_res.scalar_one_or_none()
+        if not ts:
+            await callback.answer("No active contract!", show_alert=True)
+            return
+        races_left = ts.contract_races - ts.races_completed
+        exit_fee = int(sp.reward * races_left * 0.5)
+
+    text = (
+        f"⚠️ <b>Terminate Contract — {safe(sp.name)}</b>\n\n"
+        f"📋 Races left on contract: <b>{races_left}</b>\n"
+        f"💸 Early exit fee: <b>${exit_fee:,}</b> (50% of remaining value)\n"
+        f"⭐ Reputation hit: <b>-5</b>\n\n"
+        f"<b>Are you sure you want to drop this sponsor?</b>\n\n"
+        f"<i>Once terminated, they may not offer you a deal again for a while.</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=sponsor_terminate_kb(team_id, sponsor_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sponsor:terminate:"))
+async def cb_terminate_sponsor(callback: CallbackQuery):
+    from src.services.game_services import SponsorService
+    from src.bot.keyboards.keyboards import sponsors_kb
+    parts = callback.data.split(":")
+    team_id, sponsor_id = int(parts[2]), int(parts[3])
+    mode = parts[4] if len(parts) > 4 else "early"
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Not registered!", show_alert=True)
+            return
+        success, msg = await SponsorService(db).terminate_sponsor(team.id, sponsor_id, early_exit=True)
+        await db.commit()
+
+    await callback.message.edit_text(msg, reply_markup=sponsors_kb(team_id))
+    await callback.answer("✅ Done" if success else "❌ Failed", show_alert=not success)
+
+
+@router.message(Command("signsponsor"))
+async def cmd_sign_sponsor(message: Message):
+    from src.services.game_services import SponsorService
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Usage: /signsponsor <sponsor_id>\n\nFind sponsor IDs with /sponsors → Find Sponsors")
+        return
+    try:
+        sponsor_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ Invalid sponsor ID!")
+        return
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first!")
+            return
+        success, msg = await SponsorService(db).sign_sponsor(team.id, sponsor_id)
+        await db.commit()
+
+    await message.answer(msg)
 
 
 # ─────────────────────────────────────────────
-# /research — Research tree
+# /research — Research tree (beginner-friendly)
 # ─────────────────────────────────────────────
+
+TREE_INFO = {
+    "power_unit": {
+        "label": "⚡ Power Unit",
+        "emoji": "⚡",
+        "what_it_is": (
+            "The engine + hybrid system. In F1, power units have 6 components: "
+            "ICE (engine), turbo, MGU-H, MGU-K, energy store, and control electronics. "
+            "The MGU-K recovers energy under braking and boosts the car on straights."
+        ),
+        "why_it_matters": (
+            "A powerful engine = faster on straights. Crucial at Monza 🇮🇹 (Spa 🇧🇪, Baku 🇦🇿 etc.). "
+            "Weak engine = you get overtaken on every straight, no matter how good your aero is."
+        ),
+        "stat": "engine",
+    },
+    "aero": {
+        "label": "🌬️ Aerodynamics",
+        "emoji": "🌬️",
+        "what_it_is": (
+            "How air flows around the car. F1 cars use wings, diffusers, and floors to generate "
+            "downforce — the invisible force that pushes the car INTO the track, letting it corner faster. "
+            "More downforce = faster corners. Less downforce (low drag) = faster straights."
+        ),
+        "why_it_matters": (
+            "Aero is king at twisty circuits like Hungary 🇭🇺, Monaco 🇲🇨, Singapore 🇸🇬. "
+            "A car with great aero can corner 20 km/h faster than rivals, making up huge time through the lap."
+        ),
+        "stat": "aerodynamics",
+    },
+    "weight_reduction": {
+        "label": "⚖️ Weight Reduction",
+        "emoji": "⚖️",
+        "what_it_is": (
+            "F1 cars must weigh at least 798 kg (with driver). Teams use carbon fibre, titanium, "
+            "and exotic alloys to hit the minimum. Every 10 kg saved is roughly 0.3 seconds per lap."
+        ),
+        "why_it_matters": (
+            "A lighter car accelerates faster, brakes later, and is easier on tyres. "
+            "Improves chassis stat which helps everywhere, but especially in slow-speed sections."
+        ),
+        "stat": "chassis",
+    },
+    "reliability": {
+        "label": "🔧 Reliability",
+        "emoji": "🔧",
+        "what_it_is": (
+            "How rarely your car breaks down. F1 cars are pushed to absolute limits — "
+            "engines rev to 15,000 RPM, brakes hit 1,000°C. One failed hydraulic seal = DNF."
+        ),
+        "why_it_matters": (
+            "A DNF (Did Not Finish) = 0 points + sponsor penalty + budget waste. "
+            "High reliability means more race finishes = consistent points = better standings. "
+            "Ask Honda circa 2015 why reliability matters... 💀"
+        ),
+        "stat": "reliability",
+    },
+    "tyres": {
+        "label": "🛞 Tyre Technology",
+        "emoji": "🛞",
+        "what_it_is": (
+            "Pirelli supplies all F1 teams the same tyres, but teams differ in how they manage them. "
+            "Tyre temperature window, degradation models, compound choice — it's a science. "
+            "Thermal management keeps tyres in the optimal 90–110°C window."
+        ),
+        "why_it_matters": (
+            "Good tyre tech = longer stints, fewer pit stops, and consistent lap times. "
+            "At high-deg circuits like Qatar 🇶🇦 and Spain 🇪🇸, a team with better tyre management "
+            "can run 5 laps longer per stint — that's a free pit stop advantage over rivals."
+        ),
+        "stat": "tyres",
+    },
+}
+
 
 @router.message(Command("research"))
 @router.message(F.text == "🔬 Research")
@@ -2301,14 +2634,19 @@ async def cmd_research(message: Message):
             await message.answer("❌ Register first!")
             return
         team_rp = team.research_points
+        team_budget = team.budget
         team_id = team.id
 
-    await message.answer(
+    text = (
         f"🔬 <b>Research & Development</b>\n\n"
-        f"Research Points: <b>{team_rp}</b>\n\n"
-        f"Choose a research tree to develop:",
-        reply_markup=research_kb(team_id)
+        f"🧪 Research Points: <b>{team_rp} RP</b>\n"
+        f"💰 Budget: <b>${team_budget:,}</b>\n\n"
+        f"<b>What is R&D?</b>\n"
+        f"Research Points (RP) are earned from races and daily rewards. "
+        f"Spend them here to develop your car. Each upgrade permanently boosts a stat.\n\n"
+        f"<b>Choose a research tree to explore:</b>"
     )
+    await message.answer(text, reply_markup=research_kb(team_id))
 
 
 @router.callback_query(F.data.startswith("research:tree:"))
@@ -2321,37 +2659,53 @@ async def cb_research_tree(callback: CallbackQuery):
         if not team:
             await callback.answer("❌ Register first!")
             return
-
         status = await ResearchService(db).get_tree_status(team.id, tree)
         team_rp = team.research_points
+        team_budget = team.budget
         team_id = team.id
 
-    tree_labels = {
-        "power_unit": "⚡ Power Unit",
-        "aero": "🌬️ Aerodynamics",
-        "weight_reduction": "⚖️ Weight Reduction",
-        "reliability": "🔧 Reliability",
-        "tyres": "🛞 Tyre Tech",
-    }
+    info = TREE_INFO.get(tree, {})
+    label = info.get("label", tree)
+    stat_name = info.get("stat", "").replace("_", " ").title()
+
+    # Get current stat value
+    stat_val = getattr(team, info.get("stat", "engine"), 50) if team else 50
 
     text = (
-        f"🔬 <b>{tree_labels.get(tree, tree)}</b>\n\n"
-        f"Research Points: <b>{team_rp}</b>\n\n"
+        f"{info.get('emoji', '🔬')} <b>{label}</b>\n\n"
+        f"📖 <b>What is it?</b>\n{info.get('what_it_is', '')}\n\n"
+        f"🏎️ <b>Why does it matter?</b>\n{info.get('why_it_matters', '')}\n\n"
+        f"📊 Your current <b>{stat_name}</b>: <b>{stat_val}/100</b>\n"
+        f"🧪 Your RP: <b>{team_rp}</b> | 💰 Budget: <b>${team_budget:,}</b>\n\n"
+        f"<b>Upgrade Nodes:</b>\n\n"
     )
 
     nodes = status.get("nodes", [])
     if not nodes:
-        text += "No research nodes available."
+        text += "No nodes available."
     else:
-        for node in nodes:
+        for i, node in enumerate(nodes):
             done = "✅" if node.get("done") else "🔒"
-            stat_label = node.get("stat", "").replace("_", " ").title()
+            # Show if affordable
+            can_afford_rp = team_rp >= node["rp_cost"]
+            can_afford_money = team_budget >= node["money_cost"]
+            if node.get("done"):
+                afford_tag = ""
+            elif can_afford_rp and can_afford_money:
+                afford_tag = " ✨ <i>(affordable!)</i>"
+            elif not can_afford_rp:
+                afford_tag = f" <i>(need {node['rp_cost'] - team_rp} more RP)</i>"
+            else:
+                afford_tag = f" <i>(need ${node['money_cost'] - team_budget:,} more)</i>"
+
             text += (
-                f"{done} <b>{safe(node['name'])}</b>\n"
-                f"  Cost: {node['rp_cost']} RP + ${node['money_cost']:,}\n"
-                f"  Bonus: +{node['bonus']} to {stat_label}\n"
-                f"  Use: /research {tree} {node['node']}\n\n"
+                f"{done} <b>Node {i+1}: {safe(node['name'])}</b>{afford_tag}\n"
+                f"  💸 Cost: <b>{node['rp_cost']} RP</b> + <b>${node['money_cost']:,}</b>\n"
+                f"  📈 Bonus: <b>+{node['bonus']}</b> to {stat_name}\n"
             )
+            if not node.get("done"):
+                text += f"  ▶️ Unlock: <code>/research {tree} {node['node']}</code>\n"
+            text += "\n"
 
     await callback.message.edit_text(text, reply_markup=research_kb(team_id))
     await callback.answer()
@@ -2371,7 +2725,17 @@ async def cmd_research_buy(message: Message):
             return
         success, msg = await ResearchService(db).start_research(team.id, tree, node_key)
         await db.commit()
-    await message.answer("✅ " + msg if success else "❌ " + msg)
+
+    if success:
+        # Add context about what was improved
+        info = TREE_INFO.get(tree, {})
+        stat = info.get("stat", "")
+        await message.answer(
+            f"✅ {msg}\n\n"
+            f"<i>Your car is now faster! Head to the next race to feel the difference.</i>",
+        )
+    else:
+        await message.answer("❌ " + msg)
 
 
 

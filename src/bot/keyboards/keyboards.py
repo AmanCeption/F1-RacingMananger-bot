@@ -112,6 +112,36 @@ def league_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def sponsors_kb(team_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📋 My Sponsors", callback_data=f"sponsor:my:{team_id}"),
+        InlineKeyboardButton(text="🔍 Find Sponsors", callback_data=f"sponsor:browse:{team_id}:0"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="❌ Terminate Contract", callback_data=f"sponsor:terminate_menu:{team_id}"),
+    )
+    return builder.as_markup()
+
+
+def sponsor_sign_kb(team_id: int, sponsor_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Sign Contract", callback_data=f"sponsor:sign:{team_id}:{sponsor_id}"),
+        InlineKeyboardButton(text="◀️ Back", callback_data=f"sponsor:browse:{team_id}:0"),
+    )
+    return builder.as_markup()
+
+
+def sponsor_terminate_kb(team_id: int, sponsor_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⚠️ Terminate Early (fee applies)", callback_data=f"sponsor:terminate:{team_id}:{sponsor_id}:early"),
+        InlineKeyboardButton(text="❌ Cancel", callback_data=f"sponsor:my:{team_id}"),
+    )
+    return builder.as_markup()
+
+
 def research_kb(team_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     trees = [

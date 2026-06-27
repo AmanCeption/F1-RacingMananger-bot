@@ -1501,6 +1501,14 @@ class RaceService:
         }
 
 
+# ─────────────────────────────────────────────
+# RESEARCH SERVICE
+# ─────────────────────────────────────────────
+
+class ResearchService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
     async def start_research(self, team_id: int, tree: str, node_key: str) -> tuple[bool, str]:
         if tree not in RESEARCH_TREES:
             return False, "Invalid research tree!"

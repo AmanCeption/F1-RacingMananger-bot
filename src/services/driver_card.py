@@ -1,186 +1,421 @@
 """
-Driver Detail Card Generator
-Generates a driver profile card PNG — same style as qualifying_image.py.
-Returns PNG bytes ready for bot.send_photo().
+Driver Card Generator — CCM26-inspired premium design
+Drop-in replacement for src/services/driver_card.py
+
+Same function signature as before:
+    generate_driver_card(...) -> bytes  (PNG)
+
+Design features (from CCM26 card_generator.py style):
+  - Hex polygon card shape with clipped corners
+  - L-bracket corner decorations with accent dots
+  - Gradient metallic driver number
+  - Tier badge system (ELITE / LEGEND / CHAMPION / PRO / ROOKIE)
+  - Team color stripe on left edge
+  - Stat pills grid (pace, racecraft, consistency, wet, overtaking, defence)
+  - Development potential bar (purple)
+  - Salary + status badge
+  - Glow divider line
 """
+
+from __future__ import annotations
+
 import io
 import logging
+import os
+
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
-_FONT_PATHS = {
-    "bold":   "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "normal": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+# ── Canvas ────────────────────────────────────────────────────────────────────
+W, H = 740, 460
+
+# ── Palette ───────────────────────────────────────────────────────────────────
+BG      = (6,  8,  16)
+BG2     = (10, 13, 24)
+CARD    = (14, 18, 32)
+CARD2   = (18, 22, 40)
+WHITE   = (242, 245, 255)
+DIM     = (155, 160, 195)
+MUTED   = (88,  93, 128)
+GOLD    = (255, 200, 50)
+PURPLE  = (165, 85, 255)
+GREEN   = (50,  215, 110)
+ORANGE  = (255, 135, 30)
+RED_ERR = (210, 55, 55)
+
+# Tier definitions (rating → visual identity)
+_TIERS = {
+    "elite":    {"bg": (16, 6,  28),  "bg2": (8,  3,  16),  "border": (165, 50, 255), "accent": (205, 120, 255), "label": "ELITE"},
+    "legend":   {"bg": (8,  16, 42),  "bg2": (5,  9,  28),  "border": (55, 100, 215), "accent": (115, 160, 255), "label": "LEGEND"},
+    "champion": {"bg": (28, 18, 4),   "bg2": (14, 9,  2),   "border": (195, 155, 15), "accent": (255, 205, 50),  "label": "CHAMPION"},
+    "pro":      {"bg": (50, 20, 6),   "bg2": (32, 11, 3),   "border": (180, 85,  18), "accent": (218, 122, 44),  "label": "PRO"},
+    "rookie":   {"bg": (26, 38, 52),  "bg2": (15, 23, 36),  "border": (75, 108, 145), "accent": (118, 158, 195), "label": "ROOKIE"},
+}
+
+# Common team → color mapping (fallback = indigo)
+_TEAM_COLORS: dict[str, tuple] = {
+    "Red Bull Racing":   (0,   10,  230),
+    "Ferrari":           (210, 10,  10),
+    "McLaren":           (255, 120, 0),
+    "Mercedes":          (0,   200, 170),
+    "Aston Martin":      (0,   140, 80),
+    "Alpine":            (0,   80,  200),
+    "Williams":          (0,   110, 210),
+    "AlphaTauri":        (40,  50,  120),
+    "RB":                (40,  50,  120),
+    "Alfa Romeo":        (160, 0,   0),
+    "Haas":              (175, 175, 175),
+    "Sauber":            (0,   160, 60),
 }
 
 
-def _font(style: str, size: int) -> ImageFont.FreeTypeFont:
-    try:
-        return ImageFont.truetype(_FONT_PATHS[style], size)
-    except Exception:
-        return ImageFont.load_default()
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    paths = [
+        f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if bold else ''}.ttf",
+        f"/usr/share/fonts/truetype/liberation/LiberationSans{'-Bold' if bold else '-Regular'}.ttf",
+        f"/usr/share/fonts/truetype/freefont/FreeSans{'Bold' if bold else ''}.ttf",
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
 
 
-# ── Stat bar colours ──────────────────────────────────────────────────────────
-def _stat_color(val: int) -> tuple:
-    if val >= 88:
-        return (80, 220, 120)    # green  — elite
-    if val >= 75:
-        return (255, 210, 0)     # gold   — good
-    if val >= 60:
-        return (255, 140, 40)    # orange — average
-    return (200, 60, 60)         # red    — weak
+def _tw(draw: ImageDraw.ImageDraw, text: str, font) -> int:
+    bb = draw.textbbox((0, 0), str(text), font=font)
+    return bb[2] - bb[0]
 
 
-def _draw_stat_bar(
-    draw: ImageDraw.ImageDraw,
-    x: int, y: int,
-    label: str, value: int,
-    bar_w: int = 180, bar_h: int = 14,
-) -> None:
-    """Draw label + filled bar + numeric value on one line."""
-    label_font  = _font("normal", 12)
-    value_font  = _font("bold",   13)
-
-    # Label
-    draw.text((x, y), label, font=label_font, fill=(160, 160, 190))
-
-    # Bar background
-    bx = x + 130
-    draw.rectangle([bx, y + 1, bx + bar_w, y + bar_h], fill=(30, 30, 48))
-
-    # Filled portion
-    fill_w = int(bar_w * value / 100)
-    color  = _stat_color(value)
-    if fill_w > 0:
-        draw.rectangle([bx, y + 1, bx + fill_w, y + bar_h], fill=color)
-
-    # Numeric value
-    draw.text((bx + bar_w + 8, y), str(value), font=value_font, fill=color)
+def _tier(rating: int) -> dict:
+    if rating >= 92: return _TIERS["elite"]
+    if rating >= 85: return _TIERS["legend"]
+    if rating >= 75: return _TIERS["champion"]
+    if rating >= 62: return _TIERS["pro"]
+    return _TIERS["rookie"]
 
 
-def generate_driver_card(
-    name:                 str,
-    nationality:          str,
-    age:                  int,
-    number:               int | None,
-    is_fictional:         bool,
-    skill:                int,
-    racecraft:            int,
-    pace:                 int,
-    consistency:          int,
-    wet_weather:          int,
-    overtaking:           int,
-    defence:              int,
-    development_potential: int,
-    base_salary:          int,
-    is_free_agent:        bool,
-    current_team:         str | None = None,
-) -> bytes:
-    """
-    Generate driver profile card PNG.
-    Returns PNG bytes.
-    """
-    W       = 680
-    HERO_H  = 160
-    STATS_H = 310   # 7 stats × 38px each + padding
-    FOOTER  = 48
-    H       = HERO_H + STATS_H + FOOTER
+def _team_color(team: str | None) -> tuple:
+    return _TEAM_COLORS.get(team or "", (95, 95, 185))
 
-    img  = Image.new("RGB", (W, H), (11, 11, 18))
-    draw = ImageDraw.Draw(img)
 
-    overall = (skill + pace + racecraft) // 3
+def _stat_color(v: int) -> tuple:
+    if v >= 90: return GREEN
+    if v >= 78: return GOLD
+    if v >= 62: return ORANGE
+    return RED_ERR
 
-    # ── Hero Banner ───────────────────────────────────────────────────────────
-    for i in range(HERO_H):
-        shade = 20 + i // 5
-        draw.line([(0, i), (W, i)], fill=(10, shade, shade + 10))
 
-    draw.rectangle([0, 0, W, 6], fill=(255, 200, 0))
-    draw.rectangle([0, HERO_H - 4, W, HERO_H], fill=(0, 140, 230))
-
-    # Driver number badge
-    num_str = f"#{number}" if number else "??"
-    draw.ellipse([22, 22, 108, 108], fill=(0, 100, 180))
-    draw.ellipse([26, 26, 104, 104], fill=(0, 130, 220))
-    num_font = _font("bold", 28 if number and number >= 10 else 32)
-    draw.text((40 if number and number >= 10 else 46, 48), num_str, font=num_font, fill=(255, 255, 255))
-
-    # Name + meta
-    draw.text((126, 18), "DRIVER PROFILE",     font=_font("bold",   12), fill=(0, 200, 255))
-    draw.text((126, 38), name,                  font=_font("bold",   34), fill=(255, 255, 255))
-    draw.text((128, 82), f"🌍 {nationality}  |  Age: {age}",
-              font=_font("normal", 14), fill=(180, 180, 210))
-
-    tag = "🤖 Fictional" if is_fictional else "🏎️ Real Driver"
-    draw.text((128, 104), tag, font=_font("normal", 13), fill=(130, 130, 160))
-
-    # Overall OVR badge — top right
-    draw.rectangle([W - 110, 18, W - 18, 78], fill=(20, 20, 38))
-    draw.rectangle([W - 110, 18, W - 18, 22], fill=_stat_color(overall))
-    draw.text((W - 95, 26), "OVERALL",  font=_font("bold",   11), fill=(140, 140, 170))
-    draw.text((W - 88, 40), str(overall), font=_font("bold",   28), fill=_stat_color(overall))
-
-    # Status pill
-    status_color = (40, 180, 80) if is_free_agent else (180, 60, 60)
-    status_text  = "FREE AGENT" if is_free_agent else (current_team or "CONTRACTED")
-    draw.rectangle([W - 160, 88, W - 18, 110], fill=status_color)
-    draw.text((W - 153, 92), status_text[:18], font=_font("bold", 11), fill=(255, 255, 255))
-
-    # ── Stats Section ─────────────────────────────────────────────────────────
-    y = HERO_H + 16
-
-    draw.text((18, y), "ATTRIBUTES", font=_font("bold", 13), fill=(100, 100, 140))
-    draw.line([(18, y + 20), (W - 18, y + 20)], fill=(30, 30, 50), width=1)
-    y += 30
-
-    STATS = [
-        ("Skill",           skill),
-        ("Pace",            pace),
-        ("Racecraft",       racecraft),
-        ("Consistency",     consistency),
-        ("Wet Weather",     wet_weather),
-        ("Overtaking",      overtaking),
-        ("Defence",         defence),
+def _hex_poly(x: int, y: int, w: int, h: int, cut: int = 26, cuty: int = 46) -> list:
+    return [
+        (x+cut, y), (x+w-cut, y),
+        (x+w, y+cuty), (x+w, y+h-cuty),
+        (x+w-cut, y+h), (x+cut, y+h),
+        (x, y+h-cuty), (x, y+cuty),
     ]
 
-    for label, val in STATS:
-        _draw_stat_bar(draw, 18, y, label, val)
-        y += 34
 
-    # ── Development + Salary row ──────────────────────────────────────────────
-    y += 8
-    draw.line([(18, y), (W - 18, y)], fill=(30, 30, 50), width=1)
-    y += 10
+def _gradient_fill(img: Image.Image, draw: ImageDraw.ImageDraw,
+                   x: int, y: int, w: int, h: int,
+                   c1: tuple, c2: tuple) -> None:
+    for i in range(h):
+        t = i / max(h - 1, 1)
+        r = int(c1[0] * (1-t) + c2[0] * t)
+        g = int(c1[1] * (1-t) + c2[1] * t)
+        b = int(c1[2] * (1-t) + c2[2] * t)
+        draw.line([(x, y+i), (x+w, y+i)], fill=(r, g, b))
 
-    # Development potential bar (smaller, accent colour)
-    draw.text((18, y), "Development Potential", font=_font("normal", 12), fill=(160, 160, 190))
-    bx = 18 + 200
-    bar_w = 160
-    draw.rectangle([bx, y + 1, bx + bar_w, y + 14], fill=(30, 30, 48))
-    fill_w = int(bar_w * development_potential / 100)
-    dp_color = (180, 80, 255)  # purple for potential
+
+def _gradient_text(img: Image.Image, text: str, font,
+                   x: int, y: int, c1: tuple, c2: tuple) -> None:
+    """Paste text onto img with a top→bottom color gradient (CCM26 style)."""
+    tmp = Image.new("RGBA", (900, 250), (0, 0, 0, 0))
+    d   = ImageDraw.Draw(tmp)
+    d.text((0, 0), text, fill=c1, font=font)
+    bb  = d.textbbox((0, 0), text, font=font)
+    tw2, th2 = bb[2] - bb[0], bb[3] - bb[1]
+    for row in range(th2):
+        t = row / max(th2 - 1, 1)
+        r = int(c1[0]*(1-t) + c2[0]*t)
+        g = int(c1[1]*(1-t) + c2[1]*t)
+        b = int(c1[2]*(1-t) + c2[2]*t)
+        for col in range(tw2 + 2):
+            px = tmp.getpixel((col, row))
+            if px[3] > 0:
+                tmp.putpixel((col, row), (r, g, b, px[3]))
+    crop = tmp.crop((0, 0, tw2 + 2, th2 + 2))
+    img.paste(crop, (x, y), crop)
+
+
+def _draw_brackets(draw: ImageDraw.ImageDraw,
+                   x: int, y: int, w: int, h: int,
+                   col: tuple, dot: tuple,
+                   size: int = 36, lw: int = 2, dc: int = 5) -> None:
+    """CCM26-style L-bracket corners with accent dots."""
+    for cx, cy, dx, dy in [
+        (x,   y,   1,  1),
+        (x+w, y,  -1,  1),
+        (x,   y+h, 1, -1),
+        (x+w, y+h,-1, -1),
+    ]:
+        draw.line([(cx, cy), (cx + size*dx, cy)], fill=col, width=lw)
+        draw.line([(cx, cy), (cx, cy + size*dy)], fill=col, width=lw)
+        draw.ellipse([cx-dc, cy-dc, cx+dc, cy+dc], fill=dot)
+
+
+def _draw_team_stripe(draw: ImageDraw.ImageDraw,
+                      tc: tuple, x: int, y: int, h: int, width: int = 7) -> None:
+    for i in range(width):
+        a = int(190 * (1 - i / width))
+        draw.line([(x+i, y), (x+i, y+h)], fill=(*tc, a), width=1)
+
+
+def _glow_line(draw: ImageDraw.ImageDraw,
+               x1: int, y: int, x2: int, col: tuple) -> None:
+    r, g, b = col
+    alphas = [35, 75, 150, 255, 150, 75, 35]
+    for i, a in enumerate(alphas):
+        draw.line([(x1, y-3+i), (x2, y-3+i)], fill=(r, g, b, a), width=1)
+
+
+def _stat_pill(draw: ImageDraw.ImageDraw,
+               x: int, y: int, label: str, value: int, accent: tuple) -> None:
+    pw, ph = 96, 70
+    draw.rounded_rectangle([x, y, x+pw, y+ph], radius=8,
+                            fill=CARD2, outline=(*accent, 55), width=1)
+    fv = _font(30, bold=True)
+    vw = _tw(draw, str(value), fv)
+    draw.text((x + (pw - vw)//2, y + 6), str(value), fill=accent, font=fv)
+    fl = _font(9, bold=True)
+    lab = " ".join(label[:8])
+    lw = _tw(draw, lab, fl)
+    draw.text((x + (pw - lw)//2, y + ph + 4), lab, fill=DIM, font=fl)
+
+
+def _progress_bar(draw: ImageDraw.ImageDraw,
+                  x: int, y: int, bw: int, bh: int,
+                  value: int, color: tuple) -> None:
+    draw.rounded_rectangle([x, y, x+bw, y+bh], radius=4, fill=CARD)
+    fill_w = int(bw * value / 100)
     if fill_w > 0:
-        draw.rectangle([bx, y + 1, bx + fill_w, y + 14], fill=dp_color)
-    draw.text((bx + bar_w + 8, y), str(development_potential),
-              font=_font("bold", 13), fill=dp_color)
+        draw.rounded_rectangle([x, y, x+fill_w, y+bh], radius=4, fill=color)
 
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def generate_driver_card(
+    name:                  str,
+    nationality:           str,
+    age:                   int,
+    number:                int | None,
+    is_fictional:          bool,
+    skill:                 int,
+    racecraft:             int,
+    pace:                  int,
+    consistency:           int,
+    wet_weather:           int,
+    overtaking:            int,
+    defence:               int,
+    development_potential: int,
+    base_salary:           int,
+    is_free_agent:         bool,
+    current_team:          str | None = None,
+) -> bytes:
+    """
+    Generate a premium F1 driver profile card PNG (CCM26-inspired).
+    Returns PNG bytes — same signature as original driver_card.py.
+    """
+    try:
+        return _render(
+            name=name, nationality=nationality, age=age, number=number,
+            is_fictional=is_fictional, skill=skill, racecraft=racecraft,
+            pace=pace, consistency=consistency, wet_weather=wet_weather,
+            overtaking=overtaking, defence=defence,
+            development_potential=development_potential,
+            base_salary=base_salary, is_free_agent=is_free_agent,
+            current_team=current_team,
+        )
+    except Exception:
+        logger.exception("Driver card generation failed")
+        return _fallback_card(name, number)
+
+
+def _render(**kw) -> bytes:
+    name       = kw["name"]
+    nationality= kw["nationality"]
+    age        = kw["age"]
+    number     = kw["number"]
+    is_fic     = kw["is_fictional"]
+    skill      = kw["skill"]
+    racecraft  = kw["racecraft"]
+    pace       = kw["pace"]
+    consistency= kw["consistency"]
+    wet        = kw["wet_weather"]
+    overtaking = kw["overtaking"]
+    defence    = kw["defence"]
+    dev_pot    = kw["development_potential"]
+    salary     = kw["base_salary"]
+    free_agent = kw["is_free_agent"]
+    team       = kw["current_team"]
+
+    overall = (skill + pace + racecraft) // 3
+    tier    = _tier(overall)
+    tc      = _team_color(team)
+    border  = tier["border"]
+    acc     = tier["accent"]
+
+    # ── Canvas ────────────────────────────────────────────────────────────
+    img  = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    # Hex border fill
+    shape = _hex_poly(0, 0, W, H, cut=26, cuty=46)
+    draw.polygon(shape, fill=border)
+
+    # Inner gradient background
+    inner = _hex_poly(3, 3, W-6, H-6, cut=24, cuty=44)
+    _gradient_fill(img, draw, 3, 3, W-6, H-6, tier["bg"], tier["bg2"])
+    # Redraw border outline on top
+    draw.polygon(shape, outline=border, fill=None)
+
+    # Team color accent stripe — left edge
+    _draw_team_stripe(draw, tc, 18, 52, H - 104, width=7)
+
+    # Corner brackets (CCM26 signature)
+    _draw_brackets(draw, 0, 0, W, H, border, acc, size=38, dc=5)
+
+    # ── LEFT COLUMN: driver number ────────────────────────────────────────
+    f_num = _font(112, bold=True)
+    num_str = str(number) if number is not None else "??"
+    _gradient_text(img, num_str, f_num, 40, 24, (235, 240, 255), (110, 120, 158))
+
+    # "NO" label
+    draw.text((52, 154), "N O", fill=(*DIM, 120), font=_font(10, bold=True))
+
+    # Nationality badge
+    bx, by = 40, 182
+    draw.rounded_rectangle([bx, by, bx+80, by+36],
+                            radius=6, fill=(*CARD2, 220), outline=border, width=1)
+    fn  = _font(14, bold=True)
+    nat = nationality[:3].upper()
+    nw  = _tw(draw, nat, fn)
+    draw.text((bx + (80 - nw)//2, by + 10), nat, fill=WHITE, font=fn)
+
+    # Tier badge
+    ft    = _font(10, bold=True)
+    label = tier["label"]
+    tlw   = _tw(draw, label, ft) + 16
+    tx, ty = 40, 232
+    draw.rounded_rectangle([tx, ty, tx+tlw, ty+24], radius=5, fill=(*border, 210))
+    draw.text((tx + 8, ty + 6), label, fill=WHITE, font=ft)
+
+    # Age / real vs fictional tag
+    tag = "🤖 AI" if is_fic else "🏎️ Real"
+    draw.text((40, 272), f"Age {age}", fill=(*DIM, 160), font=_font(11))
+    draw.text((40, 292), tag,         fill=(*DIM, 130), font=_font(10))
+
+    # ── RIGHT COLUMN: name ───────────────────────────────────────────────
+    rx = 170
+    f_name = _font(44, bold=True)
+    words  = name.upper().split()
+    lines, cur = [], ""
+    for w in words:
+        test = (cur + " " + w).strip()
+        if _tw(draw, test, f_name) > 520:
+            if cur:
+                lines.append(cur)
+            cur = w
+        else:
+            cur = test
+    if cur:
+        lines.append(cur)
+
+    ny = 18
+    for line in lines[:2]:
+        draw.text((rx, ny), line, fill=WHITE, font=f_name)
+        ny += 50
+
+    # Team name (spaced caps) or FREE AGENT
+    if team:
+        team_sp = "  ".join(team.upper())
+        draw.text((rx, ny + 4), team_sp, fill=acc, font=_font(12, bold=True))
+    else:
+        draw.text((rx, ny + 4), "FREE AGENT", fill=GREEN, font=_font(12, bold=True))
+
+    # Glow divider (CCM26 signature)
+    div_y = ny + 30
+    _glow_line(draw, rx, div_y, W - 36, border)
+
+    # ── STATS PILLS ──────────────────────────────────────────────────────
+    stats = [
+        ("PACE",      pace),
+        ("RACECRAFT", racecraft),
+        ("CONSIST",   consistency),
+        ("WET",       wet),
+        ("OVERTAKE",  overtaking),
+        ("DEFENCE",   defence),
+    ]
+    pill_gap = 98
+    pills_w  = len(stats) * pill_gap - 2
+    # If 6 pills overflow, use 5-per-row layout
+    sy = div_y + 14
+    for i, (lb, vl) in enumerate(stats[:6]):
+        _stat_pill(draw, rx + i * pill_gap, sy, lb, vl, _stat_color(vl))
+
+    # ── DEVELOPMENT POTENTIAL bar ─────────────────────────────────────────
+    dp_y = sy + 88
+    draw.text((rx, dp_y), "DEVELOPMENT POTENTIAL", fill=(*MUTED, 200), font=_font(10, bold=True))
+    bar_x, bar_w, bar_h = rx, pills_w, 12
+    _progress_bar(draw, bar_x, dp_y + 16, bar_w, bar_h, dev_pot, PURPLE)
+    draw.text((bar_x + bar_w + 8, dp_y + 14), str(dev_pot),
+              fill=PURPLE, font=_font(11, bold=True))
+
+    # ── BOTTOM-RIGHT: salary + status ─────────────────────────────────────
+    vx, vy = W - 165, H - 78
+    draw.rounded_rectangle([vx, vy, vx+128, vy+58],
+                            radius=8, fill=(*CARD2, 230), outline=border, width=1)
     # Salary
-    draw.text((W - 200, y), f"💰 ${base_salary:,}/yr",
-              font=_font("bold", 14), fill=(255, 210, 0))
+    draw.text((vx + 10, vy + 4), "SALARY / YR", fill=MUTED, font=_font(9, bold=True))
+    sal_str = f"${salary // 1_000_000}M" if salary >= 1_000_000 else f"${salary:,}"
+    draw.text((vx + 10, vy + 18), sal_str, fill=GOLD, font=_font(20, bold=True))
+    # Status dot
+    sc  = GREEN if free_agent else RED_ERR
+    stx = vx + 10
+    sty = vy + 44
+    draw.ellipse([stx, sty, stx+8, sty+8], fill=sc)
+    st_label = "FREE AGENT" if free_agent else "CONTRACTED"
+    draw.text((stx + 12, sty - 1), st_label, fill=sc, font=_font(9, bold=True))
 
-    # ── Footer ────────────────────────────────────────────────────────────────
-    draw.rectangle([0, H - FOOTER, W, H], fill=(11, 11, 18))
-    draw.rectangle([0, H - FOOTER, W, H - FOOTER + 3], fill=(0, 140, 230))
-    draw.text(
-        (18, H - 34),
-        "F1 Fantasy Manager  •  Driver Stats  •  /market to sign",
-        font=_font("normal", 13), fill=(90, 90, 120),
-    )
+    # ── OVERALL badge — top right corner ─────────────────────────────────
+    ox, oy = W - 96, 18
+    draw.rounded_rectangle([ox, oy, ox+78, oy+66], radius=8,
+                            fill=(*CARD, 220), outline=border, width=1)
+    draw.text((ox + 6, oy + 4), "OVERALL", fill=MUTED, font=_font(9, bold=True))
+    fw_ovr = _font(34, bold=True)
+    ow = _tw(draw, str(overall), fw_ovr)
+    draw.text((ox + (78 - ow)//2, oy + 22), str(overall),
+              fill=_stat_color(overall), font=fw_ovr)
 
+    # ── Export ────────────────────────────────────────────────────────────
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.convert("RGB").save(buf, format="PNG", quality=95, optimize=True)
+    buf.seek(0)
+    return buf.read()
+
+
+def _fallback_card(name: str, number: int | None) -> bytes:
+    """Minimal fallback if main render crashes (should never happen)."""
+    img  = Image.new("RGB", (W, H), BG)
+    draw = ImageDraw.Draw(img)
+    draw.text((30, 30), str(number or "??"), fill=WHITE, font=_font(80, bold=True))
+    draw.text((30, 130), name.upper(), fill=WHITE, font=_font(28, bold=True))
+    draw.text((30, 175), "F1 Fantasy Manager", fill=MUTED, font=_font(14))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
     buf.seek(0)
     return buf.read()

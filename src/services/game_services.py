@@ -64,26 +64,56 @@ class UserService:
             minutes = int((remaining % 3600) // 60)
             return {"available": False, "hours": hours, "minutes": minutes}
 
+        # ── Streak logic ──────────────────────────────────────────────
+        # If last claim was within 48h, streak continues; else reset
+        if user.last_daily and (now - user.last_daily).total_seconds() < 172800:
+            new_streak = min((user.login_streak or 0) + 1, 7)
+        else:
+            new_streak = 1  # reset
+
+        # Streak multipliers: day 1→1x, 2→1.2x, 3→1.5x, 4→1.8x, 5→2.2x, 6→2.7x, 7→3.5x
+        STREAK_MULTIPLIERS = {1: 1.0, 2: 1.2, 3: 1.5, 4: 1.8, 5: 2.2, 6: 2.7, 7: 3.5}
+        multiplier = STREAK_MULTIPLIERS.get(new_streak, 1.0)
+
+        base_money = settings.DAILY_REWARD_MONEY
+        base_rp = settings.DAILY_REWARD_RP
+
+        reward_money = int(base_money * multiplier)
+        reward_rp = int(base_rp * multiplier)
+
         # Get team for reward
         team_result = await self.db.execute(
             select(Team).where(Team.owner_id == user_id)
         )
         team = team_result.scalar_one_or_none()
 
-        reward_money = settings.DAILY_REWARD_MONEY
-        reward_rp = settings.DAILY_REWARD_RP
-
         if team:
             team.budget += reward_money
             team.research_points += reward_rp
 
         user.last_daily = now
+        user.login_streak = new_streak
         await self.db.flush()
+
+        # Milestone bonuses
+        milestone_bonus = None
+        if new_streak == 7:
+            if team:
+                bonus_money = 5_000_000
+                bonus_rp = 50
+                team.budget += bonus_money
+                team.research_points += bonus_rp
+                team.reputation = min(100, team.reputation + 3)
+                await self.db.flush()
+            milestone_bonus = {"money": 5_000_000, "rp": 50, "rep": 3}
 
         return {
             "available": True,
             "money": reward_money,
             "rp": reward_rp,
+            "streak": new_streak,
+            "multiplier": multiplier,
+            "milestone_bonus": milestone_bonus,
         }
 
 
@@ -1211,25 +1241,57 @@ class RaceService:
         )
         team = await TeamService(self.db).get(team_id)
 
+        terminated_sponsors = []
+
         for ts, sp in sponsors_result.all():
             ts.races_completed += 1
             success = False
 
             if sp.target_position and position and position <= sp.target_position:
                 success = True
-            elif not sp.target_position:
-                success = True  # Just for completing race
+            elif sp.target_points and not sp.target_position:
+                # points-based: just completing race counts (points tracked season-level)
+                success = True
+            elif not sp.target_position and not sp.target_points:
+                success = True  # participation sponsor
 
             if success:
                 team.budget += sp.reward
                 team.reputation = min(100, team.reputation + 1)
                 ts.total_earned += sp.reward
+                # Reset consecutive failure counter stored in termination_reason trick
+                ts.termination_reason = None
             else:
                 team.budget -= sp.penalty
                 team.reputation = max(0, team.reputation - 1)
+                # Track consecutive failures using termination_reason as temp storage
+                fail_count = 1
+                if ts.termination_reason and ts.termination_reason.startswith("fails:"):
+                    try:
+                        fail_count = int(ts.termination_reason.split(":")[1]) + 1
+                    except Exception:
+                        fail_count = 1
+                ts.termination_reason = f"fails:{fail_count}"
+
+                # Sponsor auto-terminates after 3 consecutive race failures
+                if fail_count >= 3:
+                    terminated_sponsors.append((ts, sp))
 
             if ts.races_completed >= ts.contract_races:
                 ts.is_active = False
+                ts.terminated_by = "expired"
+                ts.termination_reason = "Contract completed"
+
+        # Handle auto-terminations (sponsor walks away)
+        for ts, sp in terminated_sponsors:
+            if ts.is_active:  # not already expired this race
+                ts.is_active = False
+                ts.terminated_by = "sponsor"
+                ts.termination_reason = f"{sp.name} terminated: 3 consecutive race failures"
+                penalty_extra = int(sp.penalty * 1.5)
+                team.budget = max(0, team.budget - penalty_extra)
+                team.reputation = max(0, team.reputation - 8)
+                logger.info(f"Sponsor {sp.name} auto-terminated team {team_id} after 3 failures")
 
     async def _check_achievements(self, team_id: int, position: Optional[int], weather, bot=None):
         team = await TeamService(self.db).get(team_id)
@@ -1520,6 +1582,183 @@ class ResearchService:
                 for n in RESEARCH_TREES[tree]
             ]
         }
+
+
+# ─────────────────────────────────────────────
+# SPONSOR SERVICE
+# ─────────────────────────────────────────────
+
+class SponsorService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get_available_sponsors(self, team_id: int) -> dict:
+        """Returns list of available sponsors user can sign, and their active ones."""
+        team = await TeamService(self.db).get(team_id)
+        if not team:
+            return {}
+
+        # Active sponsors
+        active_res = await self.db.execute(
+            select(TeamSponsor, Sponsor)
+            .join(Sponsor, TeamSponsor.sponsor_id == Sponsor.id)
+            .where(and_(TeamSponsor.team_id == team_id, TeamSponsor.is_active == True))
+        )
+        active_sponsors = active_res.all()
+
+        # Already signed sponsor IDs
+        signed_ids = {ts.sponsor_id for ts, _ in active_sponsors}
+
+        # Get all sponsors from DB
+        all_res = await self.db.execute(select(Sponsor))
+        all_sponsors = all_res.scalars().all()
+
+        # Split: available (meets rep req, not already signed) vs locked
+        available = []
+        locked = []
+        for sp in all_sponsors:
+            if sp.id in signed_ids:
+                continue
+            if team.reputation >= sp.min_reputation:
+                available.append(sp)
+            else:
+                locked.append(sp)
+
+        return {
+            "team": team,
+            "active": active_sponsors,
+            "available": available,
+            "locked": locked,
+        }
+
+    async def sign_sponsor(self, team_id: int, sponsor_id: int) -> tuple[bool, str]:
+        """Sign a sponsor contract."""
+        team = await TeamService(self.db).get(team_id)
+        if not team:
+            return False, "Team not found!"
+
+        # Already signed?
+        existing_res = await self.db.execute(
+            select(TeamSponsor).where(
+                and_(TeamSponsor.team_id == team_id,
+                     TeamSponsor.sponsor_id == sponsor_id,
+                     TeamSponsor.is_active == True)
+            )
+        )
+        if existing_res.scalar_one_or_none():
+            return False, "Already have a contract with this sponsor!"
+
+        sp_res = await self.db.execute(select(Sponsor).where(Sponsor.id == sponsor_id))
+        sp = sp_res.scalar_one_or_none()
+        if not sp:
+            return False, "Sponsor not found!"
+
+        if team.reputation < sp.min_reputation:
+            return False, (
+                f"❌ Reputation too low!\n"
+                f"You need <b>{sp.min_reputation}</b> reputation, you have <b>{team.reputation}</b>.\n"
+                f"Win races and finish higher to build your reputation! 📈"
+            )
+
+        ts = TeamSponsor(
+            team_id=team_id,
+            sponsor_id=sp.id,
+            contract_races=5,
+            races_completed=0,
+            total_earned=0,
+            is_active=True,
+        )
+        self.db.add(ts)
+        await self.db.flush()
+
+        req_text = f"Top {sp.target_position}" if sp.target_position else f"{sp.target_points} pts/race"
+        return True, (
+            f"🤝 <b>Sponsor Signed!</b>\n\n"
+            f"Welcome aboard <b>{sp.name}</b>!\n\n"
+            f"💰 Reward per race: <b>${sp.reward:,}</b>\n"
+            f"🎯 Performance target: <b>{req_text}</b>\n"
+            f"⚠️ Penalty if missed: <b>${sp.penalty:,}</b>\n"
+            f"📋 Contract length: <b>5 races</b>\n\n"
+            f"<i>Deliver results and the money flows. Fail and you pay the price! 🏎️</i>"
+        )
+
+    async def terminate_sponsor(self, team_id: int, sponsor_id: int, early_exit: bool = False) -> tuple[bool, str]:
+        """Team terminates sponsor contract. Early exit = reduced payout."""
+        ts_res = await self.db.execute(
+            select(TeamSponsor, Sponsor)
+            .join(Sponsor, TeamSponsor.sponsor_id == Sponsor.id)
+            .where(
+                and_(TeamSponsor.team_id == team_id,
+                     TeamSponsor.sponsor_id == sponsor_id,
+                     TeamSponsor.is_active == True)
+            )
+        )
+        row = ts_res.first()
+        if not row:
+            return False, "No active contract with this sponsor!"
+
+        ts, sp = row
+        team = await TeamService(self.db).get(team_id)
+
+        races_left = ts.contract_races - ts.races_completed
+
+        if early_exit and races_left > 0:
+            # Pay 50% of remaining contract value as early exit fee
+            exit_fee = int(sp.reward * races_left * 0.5)
+            if team.budget < exit_fee:
+                return False, (
+                    f"❌ Cannot terminate early!\n"
+                    f"Early exit fee: <b>${exit_fee:,}</b>\n"
+                    f"Your budget: <b>${team.budget:,}</b>\n\n"
+                    f"<i>Tip: Wait for the contract to expire naturally, or earn more money first.</i>"
+                )
+            team.budget -= exit_fee
+            team.reputation = max(0, team.reputation - 5)  # rep hit
+            ts.is_active = False
+            ts.terminated_by = "team"
+            ts.termination_reason = f"Early exit by team. Fee paid: ${exit_fee:,}"
+            await self.db.flush()
+            return True, (
+                f"📋 <b>Contract Terminated</b>\n\n"
+                f"You ended the contract with <b>{sp.name}</b> early.\n\n"
+                f"💸 Early exit fee paid: <b>${exit_fee:,}</b>\n"
+                f"⭐ Reputation: <b>-5</b> (sponsors don't like being dropped)\n\n"
+                f"<i>Contract ended. You're free to sign new sponsors.</i>"
+            )
+        else:
+            ts.is_active = False
+            ts.terminated_by = "team"
+            ts.termination_reason = "Ended by team after contract completion"
+            await self.db.flush()
+            return True, f"✅ Contract with <b>{sp.name}</b> ended."
+
+    async def sponsor_auto_terminate(self, team_id: int, sponsor_id: int, reason: str) -> None:
+        """Sponsor terminates due to consistent underperformance (called internally)."""
+        ts_res = await self.db.execute(
+            select(TeamSponsor, Sponsor)
+            .join(Sponsor, TeamSponsor.sponsor_id == Sponsor.id)
+            .where(
+                and_(TeamSponsor.team_id == team_id,
+                     TeamSponsor.sponsor_id == sponsor_id,
+                     TeamSponsor.is_active == True)
+            )
+        )
+        row = ts_res.first()
+        if not row:
+            return
+        ts, sp = row
+        team = await TeamService(self.db).get(team_id)
+
+        # Sponsor pulls out — apply termination penalty
+        penalty = int(sp.penalty * 1.5)
+        if team:
+            team.budget = max(0, team.budget - penalty)
+            team.reputation = max(0, team.reputation - 8)
+
+        ts.is_active = False
+        ts.terminated_by = "sponsor"
+        ts.termination_reason = reason
+        await self.db.flush()
 
 
 # ─────────────────────────────────────────────

@@ -59,17 +59,18 @@ class TransferStatus(str, enum.Enum):
 
 
 class StaffRole(str, enum.Enum):
-    TEAM_PRINCIPAL = "team_principal"
-    TECHNICAL_DIRECTOR = "technical_director"
-    CHIEF_DESIGNER = "chief_designer"
-    HEAD_OF_AERODYNAMICS = "head_of_aerodynamics"
-    AERODYNAMICIST = "aerodynamicist"
-    RACE_ENGINEER = "race_engineer"
+    TEAM_PRINCIPAL      = "team_principal"
+    TECHNICAL_DIRECTOR  = "technical_director"
+    HEAD_OF_STRATEGY    = "head_of_strategy"
     CHIEF_RACE_ENGINEER = "chief_race_engineer"
-    PIT_CREW_CHIEF = "pit_crew_chief"
-    SPORTING_DIRECTOR = "sporting_director"
-    POWER_UNIT_DIRECTOR = "power_unit_director"
-    HEAD_OF_STRATEGY = "head_of_strategy"
+    # Legacy roles kept so existing DB rows don't break
+    CHIEF_DESIGNER       = "chief_designer"
+    HEAD_OF_AERODYNAMICS = "head_of_aerodynamics"
+    AERODYNAMICIST       = "aerodynamicist"
+    RACE_ENGINEER        = "race_engineer"
+    PIT_CREW_CHIEF       = "pit_crew_chief"
+    SPORTING_DIRECTOR    = "sporting_director"
+    POWER_UNIT_DIRECTOR  = "power_unit_director"
     PERFORMANCE_DIRECTOR = "performance_director"
 
 

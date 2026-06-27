@@ -30,6 +30,8 @@ GROUP_ALLOWED_COMMANDS = {
     "practice", "qualifying", "strategy", "runrace", "sprintrace", "startseason",
     # Onboarding — allowed in groups
     "tutorial",
+    # Group linking — must be run in group
+    "setgroup",
 }
 
 # ── Throttle: only notify group once per user per N seconds ─────────────────

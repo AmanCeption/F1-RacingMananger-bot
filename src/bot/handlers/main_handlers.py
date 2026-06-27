@@ -943,51 +943,274 @@ def _role_label(role) -> str:
 
 
 # ─────────────────────────────────────────────
-# /staffmarket — Browse available staff
 # ─────────────────────────────────────────────
+# /staffmarket — Browse staff by position (inline buttons)
+# ─────────────────────────────────────────────
+
+# 4 main positions shown as buttons
+MAIN_POSITIONS = [
+    ("team_principal",      "👔 Team Principal"),
+    ("technical_director",  "🔬 Technical Director"),
+    ("head_of_strategy",    "📊 Head of Strategy"),
+    ("chief_race_engineer", "📻 Chief Race Engineer"),
+]
+
+POSITION_DETAILS = {
+    "team_principal": {
+        "emoji": "👔", "label": "Team Principal",
+        "what": "Runs the whole team — budget decisions, driver signings, press conferences.",
+        "race_effect": "Boosts overall team reputation & budget earnings each race.",
+        "stat_boost": "Reputation +20% | Prize money multiplier",
+    },
+    "technical_director": {
+        "emoji": "🔬", "label": "Technical Director",
+        "what": "Leads all car development — aerodynamics, chassis, reliability.",
+        "race_effect": "Engine, Aero & Chassis upgrades cost less and give bigger gains.",
+        "stat_boost": "Car development efficiency +15%",
+    },
+    "head_of_strategy": {
+        "emoji": "📊", "label": "Head of Strategy",
+        "what": "Models race strategies before the weekend, calls the pit window live.",
+        "race_effect": "Gives tyre compound recommendation + optimal strategy before every race.",
+        "stat_boost": "Strategy decisions accuracy +20%",
+    },
+    "chief_race_engineer": {
+        "emoji": "📻", "label": "Chief Race Engineer",
+        "what": "On the pit wall — sets up the car & guides the driver through the race.",
+        "race_effect": "Post-race telemetry debrief + setup advice before qualifying.",
+        "stat_boost": "Lap time improvement +0.1-0.3s per race",
+    },
+}
+
+
+def staffmarket_main_kb() -> InlineKeyboardMarkup:
+    """4 position buttons + hired staff check."""
+    buttons = [
+        [InlineKeyboardButton(text=label, callback_data=f"sm:pos:{role}")]
+        for role, label in MAIN_POSITIONS
+    ]
+    buttons.append([InlineKeyboardButton(text="👥 My Hired Staff", callback_data="sm:mystaff")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def staffmarket_pos_kb(role: str, page: int = 0) -> InlineKeyboardMarkup:
+    """Back button + hire buttons per staff entry."""
+    buttons = [
+        [InlineKeyboardButton(text="⬅️ Back to Positions", callback_data="sm:back")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 
 @router.message(Command("staffmarket"))
 @router.message(F.text == "👥 Staff Market")
 async def cmd_staffmarket(message: Message):
+    text = (
+        "👥 <b>STAFF MARKET</b>\n\n"
+        "Hire key personnel to boost your team's performance.\n\n"
+        "<b>4 Main Positions Available:</b>\n\n"
+        "👔 <b>Team Principal</b> — Overall leadership & prize money boost\n"
+        "🔬 <b>Technical Director</b> — Car development & upgrades\n"
+        "📊 <b>Head of Strategy</b> — Race strategy & tyre recommendations\n"
+        "📻 <b>Chief Race Engineer</b> — Setup advice & race debrief\n\n"
+        "<i>Tap a position to see available staff:</i>"
+    )
+    await message.answer(text, reply_markup=staffmarket_main_kb())
+
+
+@router.callback_query(F.data == "sm:back")
+async def cb_sm_back(callback: CallbackQuery):
+    text = (
+        "👥 <b>STAFF MARKET</b>\n\n"
+        "Hire key personnel to boost your team's performance.\n\n"
+        "<b>4 Main Positions Available:</b>\n\n"
+        "👔 <b>Team Principal</b> — Overall leadership & prize money boost\n"
+        "🔬 <b>Technical Director</b> — Car development & upgrades\n"
+        "📊 <b>Head of Strategy</b> — Race strategy & tyre recommendations\n"
+        "📻 <b>Chief Race Engineer</b> — Setup advice & race debrief\n\n"
+        "<i>Tap a position to see available staff:</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=staffmarket_main_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sm:pos:"))
+async def cb_sm_position(callback: CallbackQuery):
+    role = callback.data.split(":", 2)[2]
+    info = POSITION_DETAILS.get(role, {})
+    emoji = info.get("emoji", "👤")
+    label = info.get("label", role)
+
     async with get_session() as db:
         result = await db.execute(
-            select(Staff).where(Staff.is_available == True).order_by(Staff.role, Staff.skill.desc())
+            select(Staff)
+            .where(and_(Staff.role == role, Staff.is_available == True))
+            .order_by(Staff.skill.desc())
         )
-        all_staff = result.scalars().all()
+        staff_list = result.scalars().all()
 
-    if not all_staff:
-        await message.answer("❌ No staff available in the market right now.")
+        # Check if user already hired this role
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        already_hired = None
+        if team:
+            hired_res = await db.execute(
+                select(Staff.name)
+                .join(TeamStaff, TeamStaff.staff_id == Staff.id)
+                .where(and_(TeamStaff.team_id == team.id, Staff.role == role))
+            )
+            already_hired = hired_res.scalar_one_or_none()
+
+    lines = [
+        f"{emoji} <b>{label}</b>\n",
+        f"📌 <i>{info.get('what', '')}</i>\n",
+        f"🏁 <b>Race Effect:</b> {info.get('race_effect', '')}\n",
+        f"📈 <b>Stat Boost:</b> {info.get('stat_boost', '')}\n",
+    ]
+
+    if already_hired:
+        lines.append(f"\n✅ <b>You have hired:</b> {already_hired}\n<i>Fire them first to sign someone new.</i>\n")
+
+    if not staff_list:
+        lines.append("\n❌ No staff available in this position right now.")
+        buttons = [[InlineKeyboardButton(text="⬅️ Back", callback_data="sm:back")]]
+        await callback.message.edit_text(
+            "\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+        await callback.answer()
         return
 
-    # Group by role
-    by_role = {}
-    for s in all_staff:
-        r = _role_str(s.role)
-        by_role.setdefault(r, []).append(s)
+    lines.append(f"\n<b>Available ({len(staff_list)}):</b>")
 
-    lines = ["👥 <b>STAFF MARKET</b>\n",
-             "Use /hirestaff &lt;id&gt; to hire someone.\n"]
+    # Build buttons — one hire button per staff member
+    hire_buttons = []
+    for s in staff_list:
+        real_tag = " ⭐" if s.is_real else ""
+        skill_bar = "█" * (s.skill // 10) + "░" * (10 - s.skill // 10)
+        specialty_tag = f" [{s.specialty}]" if s.specialty else ""
+        lines.append(
+            f"\n{'👑' if s.skill >= 95 else '🔵' if s.skill >= 85 else '⚪'} "
+            f"<b>{s.name}</b>{real_tag}{specialty_tag}\n"
+            f"   Skill: <code>{skill_bar} {s.skill}/100</code>\n"
+            f"   💰 ${s.salary:,}/season | Bonus: +{round((s.performance_bonus-1)*100,1)}%\n"
+            f"   🆔 ID: <code>{s.id}</code>"
+        )
+        btn_label = f"✅ Hire {s.name}" + (" ⭐" if s.is_real else "")
+        hire_buttons.append([
+            InlineKeyboardButton(text=btn_label, callback_data=f"sm:hire:{s.id}")
+        ])
 
-    for role_key, members in by_role.items():
-        emoji = ROLE_EMOJI.get(role_key, "👤")
-        label = ROLE_LABEL.get(role_key, role_key.replace("_"," ").title())
-        does = ROLE_WHAT_THEY_DO.get(role_key, "")
-        lines.append(f"\n{emoji} <b>{label}</b>")
-        lines.append(f"<i>{does}</i>")
-        for s in members:
-            real_badge = " ⭐" if getattr(s, "is_real", False) else ""
-            specialty = f" [{s.specialty}]" if getattr(s, "specialty", None) else ""
-            lines.append(
-                f"  <code>ID:{s.id}</code> {safe(s.name)}{real_badge}{specialty}\n"
-                f"  Skill: {'█' * (s.skill // 10)}{'░' * (10 - s.skill // 10)} {s.skill}/100\n"
-                f"  Salary: ${s.salary:,}/season | Bonus: +{round((s.performance_bonus-1)*100,1)}%"
+    hire_buttons.append([InlineKeyboardButton(text="⬅️ Back to Positions", callback_data="sm:back")])
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=hire_buttons)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sm:hire:"))
+async def cb_sm_hire(callback: CallbackQuery):
+    staff_id = int(callback.data.split(":", 2)[2])
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!", show_alert=True)
+            return
+
+        staff_res = await db.execute(select(Staff).where(Staff.id == staff_id))
+        staff = staff_res.scalar_one_or_none()
+        if not staff or not staff.is_available:
+            await callback.answer("❌ Staff no longer available!", show_alert=True)
+            return
+
+        # Check budget
+        if team.budget < staff.salary:
+            await callback.answer(
+                f"❌ Not enough budget!\nNeed: ${staff.salary:,}\nYours: ${team.budget:,}",
+                show_alert=True
             )
+            return
 
-    lines.append("\n⭐ = Real F1 legend")
-    await message.answer("\n".join(lines), parse_mode="HTML")
+        # Check same role already hired
+        existing_res = await db.execute(
+            select(TeamStaff).join(Staff, TeamStaff.staff_id == Staff.id)
+            .where(and_(TeamStaff.team_id == team.id, Staff.role == staff.role))
+        )
+        if existing_res.scalar_one_or_none():
+            await callback.answer(
+                f"❌ You already have a {staff.role.replace('_',' ').title()}! Fire them first.",
+                show_alert=True
+            )
+            return
+
+        # Hire
+        team.budget -= staff.salary
+        staff.is_available = False
+        db.add(TeamStaff(team_id=team.id, staff_id=staff.id, salary=staff.salary))
+        await db.commit()
+
+    info = POSITION_DETAILS.get(staff.role, {})
+    real_badge = " ⭐ F1 Legend!" if staff.is_real else ""
+    await callback.message.edit_text(
+        f"✅ <b>{staff.name}</b>{real_badge} signed!\n\n"
+        f"{info.get('emoji','👤')} <b>{info.get('label', staff.role)}</b>\n"
+        f"⚙️ Skill: <b>{staff.skill}/100</b>\n"
+        f"💰 Salary: <b>${staff.salary:,}/season</b>\n"
+        f"📈 Bonus: <b>+{round((staff.performance_bonus-1)*100,1)}%</b>\n\n"
+        f"🏁 <i>{info.get('race_effect','')}</i>\n\n"
+        f"Use /mystaff to see your full coaching team.",
+    )
+    await callback.answer("✅ Hired!")
 
 
-# ─────────────────────────────────────────────
+@router.callback_query(F.data == "sm:mystaff")
+async def cb_sm_mystaff(callback: CallbackQuery):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!", show_alert=True)
+            return
+        res = await db.execute(
+            select(TeamStaff, Staff)
+            .join(Staff, TeamStaff.staff_id == Staff.id)
+            .where(TeamStaff.team_id == team.id)
+        )
+        hired = res.all()
+
+    if not hired:
+        await callback.message.edit_text(
+            "👥 <b>My Staff</b>\n\nYou have no staff hired yet.\n\n"
+            "Hire staff to get race insights, strategy calls, and car development advice!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Back to Market", callback_data="sm:back")]
+            ])
+        )
+        await callback.answer()
+        return
+
+    lines = ["👥 <b>My Hired Staff</b>\n"]
+    total_salary = 0
+    for ts, s in hired:
+        info = POSITION_DETAILS.get(s.role, {})
+        real_badge = " ⭐" if s.is_real else ""
+        lines.append(
+            f"{info.get('emoji','👤')} <b>{s.name}</b>{real_badge}\n"
+            f"   {info.get('label', s.role)}  |  Skill: {s.skill}/100\n"
+            f"   💰 ${ts.salary:,}/season"
+        )
+        total_salary += ts.salary
+
+    lines.append(f"\n💸 <b>Total Wage Bill: ${total_salary:,}/season</b>")
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Back to Market", callback_data="sm:back")]
+        ])
+    )
+    await callback.answer()
+
+
 # /hirestaff <id> — Hire a staff member
 # ─────────────────────────────────────────────
 

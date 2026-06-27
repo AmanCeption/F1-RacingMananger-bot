@@ -87,6 +87,7 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     ban_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_daily: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    login_streak: Mapped[int] = mapped_column(Integer, default=0)
     last_command_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     command_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
@@ -442,6 +443,8 @@ class TeamSponsor(Base):
     races_completed: Mapped[int] = mapped_column(Integer, default=0)
     total_earned: Mapped[int] = mapped_column(BigInteger, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    terminated_by: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # "team", "sponsor", "expired"
+    termination_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     signed_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
     team: Mapped["Team"] = relationship("Team", back_populates="sponsors")

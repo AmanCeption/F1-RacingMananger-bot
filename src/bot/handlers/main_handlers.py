@@ -797,6 +797,130 @@ async def market_free_agents(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("market:transfers:"))
+async def market_transfers(callback: CallbackQuery):
+    page = int(callback.data.split(":")[2])
+    per_page = 5
+
+    async with get_session() as db:
+        listings = await DriverMarketService(db).get_transfer_listings()
+
+    # Filter fixed-price listings (not auctions)
+    fixed = [(t, d, tm) for t, d, tm in listings if not t.is_auction]
+
+    total_pages = max(1, (len(fixed) + per_page - 1) // per_page)
+    page_items = fixed[page * per_page:(page + 1) * per_page]
+
+    text = "💸 <b>Transfer List</b>\n\n"
+    if page_items:
+        for transfer, driver, selling_team in page_items:
+            overall = (driver.skill + driver.pace + driver.racecraft) // 3
+            seller = selling_team.name if selling_team else "Free Agent"
+            text += (
+                f"<b>{driver.name}</b> | ⭐ Overall: {overall}\n"
+                f"  🏎️ From: {seller}\n"
+                f"  💰 Price: <b>${transfer.asking_price:,}</b>\n"
+                f"  Use: /buydriver {driver.id}\n\n"
+            )
+    else:
+        text += "No drivers on the transfer list right now.\n\nCheck back after the next race weekend!"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=pagination_kb("market:transfers", page, total_pages)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("market:auctions:"))
+async def market_auctions(callback: CallbackQuery):
+    from datetime import datetime as dt
+    page = int(callback.data.split(":")[2])
+    per_page = 5
+
+    async with get_session() as db:
+        listings = await DriverMarketService(db).get_transfer_listings()
+
+    # Filter auction listings only
+    auctions = [(t, d, tm) for t, d, tm in listings if t.is_auction]
+
+    total_pages = max(1, (len(auctions) + per_page - 1) // per_page)
+    page_items = auctions[page * per_page:(page + 1) * per_page]
+
+    text = "🔨 <b>Live Auctions</b>\n\n"
+    if page_items:
+        for transfer, driver, selling_team in page_items:
+            overall = (driver.skill + driver.pace + driver.racecraft) // 3
+            seller = selling_team.name if selling_team else "Free Agent"
+            current_bid = transfer.highest_bid or transfer.asking_price
+            # Time remaining
+            time_left = ""
+            if transfer.auction_end:
+                remaining = transfer.auction_end - dt.utcnow()
+                if remaining.total_seconds() > 0:
+                    hrs = int(remaining.total_seconds() // 3600)
+                    mins = int((remaining.total_seconds() % 3600) // 60)
+                    time_left = f"⏰ {hrs}h {mins}m left"
+                else:
+                    time_left = "⌛ Expired"
+
+            text += (
+                f"<b>{driver.name}</b> | ⭐ Overall: {overall}\n"
+                f"  🏎️ From: {seller}\n"
+                f"  💰 Current Bid: <b>${current_bid:,}</b>\n"
+                f"  {time_left}\n"
+                f"  Bid: /bid {transfer.id} &lt;amount&gt;\n\n"
+            )
+    else:
+        text += "No active auctions right now.\n\nSell your driver as an auction with:\n/selldriver &lt;driver_id&gt; auction"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=pagination_kb("market:auctions", page, total_pages)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "market:sell")
+async def market_sell_menu(callback: CallbackQuery):
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(callback.from_user.id)
+        if not team:
+            await callback.answer("❌ Register first!", show_alert=True)
+            return
+
+        team_data = await TeamService(db).get_with_drivers(team.id)
+
+    drivers = team_data.get("drivers", [])
+
+    if not drivers:
+        await callback.answer("❌ You have no drivers to sell!", show_alert=True)
+        return
+
+    text = "📤 <b>Sell a Driver</b>\n\n"
+    text += "Your current drivers:\n\n"
+    for entry in drivers:
+        d = entry["driver"]
+        c = entry["contract"]
+        overall = (d.skill + d.pace + d.racecraft) // 3
+        text += (
+            f"<b>{d.name}</b> (ID: {d.id})\n"
+            f"  ⭐ Overall: {overall} | 💸 Salary: ${c.salary:,}/yr\n\n"
+        )
+
+    text += (
+        "To list at fixed price:\n"
+        "<code>/selldriver &lt;driver_id&gt; &lt;price&gt;</code>\n\n"
+        "To list as auction (24h):\n"
+        "<code>/selldriver &lt;driver_id&gt; auction</code>"
+    )
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="◀️ Back to Market", callback_data="market:free:0"))
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    await callback.answer()
+
+
 @router.message(Command("buydriver"))
 async def cmd_buy_driver(message: Message):
     parts = message.text.split()

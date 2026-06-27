@@ -55,6 +55,11 @@ async def run_migrations():
                 "ALTER TABLE team_sponsors ADD COLUMN IF NOT EXISTS termination_reason TEXT"
             ))
 
+            # Group chat linking — allows bot to broadcast race/qualifying to a Telegram group
+            await conn.execute(text(
+                "ALTER TABLE leagues ADD COLUMN IF NOT EXISTS group_chat_id BIGINT"
+            ))
+
             # Add unique constraints on standings tables (safe — IF NOT EXISTS)
             for constraint_sql in [
                 """

@@ -17,7 +17,7 @@ import logging
 from typing import Callable, Any
 
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, Message, ChatType
+from aiogram.types import TelegramObject, Message
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class PrivateOnlyMiddleware(BaseMiddleware):
 
         # Only care about group / supergroup chats
         chat_type = event.chat.type if event.chat else None
-        if chat_type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        if chat_type not in ("group", "supergroup"):
             return await handler(event, data)
 
         # Only intercept actual bot commands (text starting with /)

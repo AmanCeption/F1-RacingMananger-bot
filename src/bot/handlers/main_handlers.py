@@ -718,6 +718,60 @@ async def cmd_qualifying(message: Message):
     except Exception as e:
         logger.warning(f"Circuit card failed: {e}")
 
+    # ── BROADCAST QUALIFYING TO ALL LEAGUE MEMBERS ─────────────────────
+    # Build the grid summary text once
+    grid_summary = f"🏁 <b>QUALIFYING RESULT — {safe(result.get('race_name', ''))}</b>\n"
+    grid_summary += f"🏟️ {safe(result.get('circuit', ''))} {result.get('country', '')}\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    for entry in result.get("grid", [])[:20]:
+        pos = entry["position"]
+        pos_str = medals[pos - 1] if pos <= 3 else f"P{pos:>2}"
+        best = entry.get("best_time")
+        time_str = ""
+        if best:
+            m_t, s_t = divmod(best, 60)
+            time_str = f"  {int(m_t)}:{s_t:06.3f}"
+        grid_summary += f"{pos_str}  {safe(entry['driver'])} <i>({safe(entry['team'])})</i>{time_str}\n"
+    grid_summary += "\n🚦 <b>Race starts when the league owner runs /runrace</b>"
+
+    async with get_session() as db_broadcast:
+        from src.models.models import League as _League, Team as _Team
+        from sqlalchemy import select as _sel
+
+        league_res2 = await db_broadcast.execute(
+            _sel(_League).where(_League.id == team.league_id)
+        )
+        league_obj = league_res2.scalar_one_or_none()
+
+        teams_res = await db_broadcast.execute(
+            _sel(_Team).where(_Team.league_id == team.league_id)
+        )
+        all_teams = teams_res.scalars().all()
+
+    # DM every member except the owner (owner already got it via message.answer)
+    for t in all_teams:
+        if t.owner_id == message.from_user.id:
+            continue
+        try:
+            await message.bot.send_message(
+                t.owner_id,
+                grid_summary,
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass  # user may have blocked bot
+
+    # Also post to linked group if set
+    if league_obj and league_obj.group_chat_id:
+        try:
+            await message.bot.send_message(
+                league_obj.group_chat_id,
+                grid_summary,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning(f"Group qualifying broadcast failed: {e}")
+
 
 # ─────────────────────────────────────────────
 # STANDINGS
@@ -2230,8 +2284,33 @@ async def cmd_runrace(message: Message):
             f"🚦 <b>Race begins in 5 seconds...</b>"
         )
 
+        # Fetch all league members and group chat for broadcast
+        teams_for_broadcast_res = await db.execute(
+            sa_select(Team).where(Team.league_id == league_id)
+        )
+        all_league_teams_broadcast = [
+            (t.owner_id, t.id)
+            for t in teams_for_broadcast_res.scalars().all()
+        ]
+        league_group_chat_id = league.group_chat_id if league else None
+        caller_user_id = message.from_user.id
+
     # ── Announce (outside session — no DB connection held during sleep) ──
     await message.answer(announce_text)
+    # Broadcast race start to all other league members
+    for (owner_id, _team_id) in all_league_teams_broadcast:
+        if owner_id == caller_user_id:
+            continue
+        try:
+            await message.bot.send_message(owner_id, announce_text, parse_mode="HTML")
+        except Exception:
+            pass
+    # Broadcast to linked group
+    if league_group_chat_id:
+        try:
+            await message.bot.send_message(league_group_chat_id, announce_text, parse_mode="HTML")
+        except Exception:
+            pass
     await asyncio.sleep(5)
 
     # ── Run simulation in a fresh session ───────────────────────────
@@ -2273,13 +2352,30 @@ async def cmd_runrace(message: Message):
     commentary_chunks = build_commentary(raw_events, results_list)
 
     # ── LIVE BROADCAST — 40s to 90s total ─────────────────────────────
+    # Helper: send a message to all members + group
+    async def _broadcast(text: str):
+        for (owner_id, _tid) in all_league_teams_broadcast:
+            if owner_id == caller_user_id:
+                continue
+            try:
+                await message.bot.send_message(owner_id, text, parse_mode="HTML")
+            except Exception:
+                pass
+        if league_group_chat_id:
+            try:
+                await message.bot.send_message(league_group_chat_id, text, parse_mode="HTML")
+            except Exception:
+                pass
+
     # Opening shot
-    await message.answer(
+    lights_out_text = (
         f"🔴 <b>LIGHTS OUT AND AWAY WE GO!</b>\n\n"
         f"🏁 <b>{safe(race_name)}</b> — {safe(circuit)} {country}\n"
         f"{weather_label} Weather: {weather_raw.replace('_', ' ').title()}\n\n"
         + (commentary_chunks[0] if commentary_chunks else "🚦 The race is underway!")
     )
+    await message.answer(lights_out_text)
+    await _broadcast(lights_out_text)
 
     if len(commentary_chunks) > 1:
         # Spread remaining chunks across 40-80 seconds
@@ -2292,13 +2388,17 @@ async def cmd_runrace(message: Message):
                 ["SAFETY CAR", "RED FLAG", "RETIREMENT", "overtakes",
                  "VSC", "5 LAPS", "INCIDENT", "CRASH"])
             prefix = "🚨 <b>INCIDENT</b>" if is_drama else "📡 <b>LIVE</b>"
-            await message.answer(f"{prefix}\n\n{chunk}")
+            chunk_msg = f"{prefix}\n\n{chunk}"
+            await message.answer(chunk_msg)
+            await _broadcast(chunk_msg)
     else:
         await asyncio.sleep(40)  # minimum race duration even if no events
 
     # Chequered flag
     await asyncio.sleep(6)
-    await message.answer("🏁 <b>CHEQUERED FLAG!</b>\n\nFinal results incoming...")
+    chequered_msg = "🏁 <b>CHEQUERED FLAG!</b>\n\nFinal results incoming..."
+    await message.answer(chequered_msg)
+    await _broadcast(chequered_msg)
     await asyncio.sleep(3)
 
     # ── RACE RESULT IMAGE ──────────────────────────────────────────────
@@ -2378,67 +2478,71 @@ async def cmd_runrace(message: Message):
         await message.answer(text)
 
     # ── PERSONAL TEAM HIGHLIGHT ──────────────────────────────────────
-    # Send every team owner their own result privately (or in-chat if solo)
+    # Send every team owner their own personal result via DM
     if results_list:
-        # Find the calling user's team result
-        async with get_session() as db_ph:
-            my_team = await TeamService(db_ph).get_by_owner(message.from_user.id)
-            my_team_id = my_team.id if my_team else None
-
-        if my_team_id:
-            my_result = next(
-                (r for r in results_list if r.get("team_id") == my_team_id), None
+        for (owner_id, team_id_bc) in all_league_teams_broadcast:
+            team_result_entry = next(
+                (r for r in results_list if r.get("team_id") == team_id_bc), None
             )
-            if my_result:
-                pos = my_result.get("position")
-                pts = my_result.get("points", 0)
-                driver_name = safe(my_result.get("driver", ""))
-                fl_tag = "  ⚡ <b>Fastest Lap!</b>" if my_result.get("fastest_lap") else ""
-                gap = my_result.get("gap_to_leader")
-                gap_str = f"  +{gap:.3f}s to leader" if gap and not my_result.get("dnf") else ""
-                pits = my_result.get("pit_stops", 0)
+            if not team_result_entry:
+                continue
 
-                if my_result.get("dnf"):
-                    pos_str = "💥 DNF"
-                    reason = f" — {safe(my_result.get('dnf_reason', 'Mechanical'))}"
-                    pts_str = "0 points"
-                    highlight_color = "❌"
-                elif pos == 1:
-                    pos_str = "🥇 P1 — VICTORY!"
-                    reason = ""
-                    pts_str = f"+{pts} pts"
-                    highlight_color = "🏆"
-                elif pos == 2:
-                    pos_str = "🥈 P2 — Podium!"
-                    reason = ""
-                    pts_str = f"+{pts} pts"
-                    highlight_color = "🎉"
-                elif pos == 3:
-                    pos_str = "🥉 P3 — Podium!"
-                    reason = ""
-                    pts_str = f"+{pts} pts"
-                    highlight_color = "🎉"
-                elif pos and pos <= 10:
-                    pos_str = f"✅ P{pos} — Points finish"
-                    reason = ""
-                    pts_str = f"+{pts} pts"
-                    highlight_color = "📊"
-                else:
-                    pos_str = f"P{pos}" if pos else "—"
-                    reason = ""
-                    pts_str = "0 pts"
-                    highlight_color = "📋"
+            pos = team_result_entry.get("position")
+            pts = team_result_entry.get("points", 0)
+            driver_name = safe(team_result_entry.get("driver", ""))
+            fl_tag = "  ⚡ <b>Fastest Lap!</b>" if team_result_entry.get("fastest_lap") else ""
+            gap = team_result_entry.get("gap_to_leader")
+            gap_str = f"  +{gap:.3f}s to leader" if gap and not team_result_entry.get("dnf") else ""
+            pits = team_result_entry.get("pit_stops", 0)
 
-                personal_msg = (
-                    f"{highlight_color} <b>YOUR RESULT — {safe(race_name)}</b>\n\n"
-                    f"🏎️ Driver: <b>{driver_name}</b>\n"
-                    f"🏁 Result: <b>{pos_str}</b>{reason}\n"
-                    f"💰 Points: <b>{pts_str}</b>{fl_tag}\n"
-                    + (f"⏱️ Gap: {gap_str}\n" if gap_str else "")
-                    + f"🔄 Pit Stops: {pits}\n\n"
-                    f"<i>/standings — Full championship table</i>"
-                )
+            if team_result_entry.get("dnf"):
+                pos_str = "💥 DNF"
+                reason = f" — {safe(team_result_entry.get('dnf_reason', 'Mechanical'))}"
+                pts_str = "0 points"
+                highlight_color = "❌"
+            elif pos == 1:
+                pos_str = "🥇 P1 — VICTORY!"
+                reason = ""
+                pts_str = f"+{pts} pts"
+                highlight_color = "🏆"
+            elif pos == 2:
+                pos_str = "🥈 P2 — Podium!"
+                reason = ""
+                pts_str = f"+{pts} pts"
+                highlight_color = "🎉"
+            elif pos == 3:
+                pos_str = "🥉 P3 — Podium!"
+                reason = ""
+                pts_str = f"+{pts} pts"
+                highlight_color = "🎉"
+            elif pos and pos <= 10:
+                pos_str = f"✅ P{pos} — Points finish"
+                reason = ""
+                pts_str = f"+{pts} pts"
+                highlight_color = "📊"
+            else:
+                pos_str = f"P{pos}" if pos else "—"
+                reason = ""
+                pts_str = "0 pts"
+                highlight_color = "📋"
+
+            personal_msg = (
+                f"{highlight_color} <b>YOUR RESULT — {safe(race_name)}</b>\n\n"
+                f"🏎️ Driver: <b>{driver_name}</b>\n"
+                f"🏁 Result: <b>{pos_str}</b>{reason}\n"
+                f"💰 Points: <b>{pts_str}</b>{fl_tag}\n"
+                + (f"⏱️ Gap: {gap_str}\n" if gap_str else "")
+                + f"🔄 Pit Stops: {pits}\n\n"
+                f"<i>/standings — Full championship table</i>"
+            )
+
+            if owner_id == caller_user_id:
                 await message.answer(personal_msg)
+            else:
+                try:
+                    await message.bot.send_message(owner_id, personal_msg, parse_mode="HTML")
+                except Exception:
+                    pass
 
     # ── CIRCUIT INFO CARD ─────────────────────────────────────────────
     try:
@@ -3545,3 +3649,97 @@ async def cmd_sprintrace(message: Message):
         + "\n\n🏎️ Main race: /runrace"
     )
     await message.answer(sprint_text)
+
+
+# ─────────────────────────────────────────────
+# /setgroup — Link a Telegram group to your league
+# Usage: Run /setgroup inside the group you want to link
+# The bot must be a member of that group
+# ─────────────────────────────────────────────
+
+@router.message(Command("setgroup"))
+async def cmd_setgroup(message: Message):
+    """
+    Run this command INSIDE a Telegram group to link it to your league.
+    After linking, all race/qualifying broadcasts will be sent to that group.
+    To unlink, run /unsetgroup in DM.
+    """
+    from src.models.models import League as _League
+    from sqlalchemy import select as _sel, update as _upd
+
+    chat_type = message.chat.type if message.chat else "private"
+
+    # If run in DM, explain usage
+    if chat_type == "private":
+        await message.answer(
+            "ℹ️ <b>How to link a group:</b>\n\n"
+            "1. Add this bot to your Telegram group\n"
+            "2. Run <code>/setgroup</code> <b>inside that group</b>\n\n"
+            "After linking, race announcements, qualifying grids, and live commentary "
+            "will be broadcast to that group automatically.\n\n"
+            "To unlink: run <code>/unsetgroup</code> here in DM."
+        )
+        return
+
+    # Command was run inside a group
+    group_chat_id = message.chat.id
+    group_name = message.chat.title or "this group"
+
+    async with get_session() as db:
+        # Find the league owned by this user
+        team_res = await db.execute(
+            _sel(Team).where(Team.owner_id == message.from_user.id)
+        )
+        team = team_res.scalar_one_or_none()
+        if not team or not team.league_id:
+            await message.answer("❌ You don't own any league yet. Create one with /createleague first.")
+            return
+
+        league_res = await db.execute(
+            _sel(_League).where(_League.id == team.league_id)
+        )
+        league = league_res.scalar_one_or_none()
+        if not league or league.owner_id != message.from_user.id:
+            await message.answer("❌ Only the league owner can link a group.")
+            return
+
+        league.group_chat_id = group_chat_id
+        await db.commit()
+
+    await message.answer(
+        f"✅ <b>{safe(group_name)}</b> is now linked to league <b>{safe(league.name)}</b>!\n\n"
+        f"All race weekends, qualifying sessions, and live commentary will be broadcast here. 🏎️"
+    )
+
+
+@router.message(Command("unsetgroup"))
+async def cmd_unsetgroup(message: Message):
+    """Remove the linked group from your league (run in DM)."""
+    from src.models.models import League as _League
+    from sqlalchemy import select as _sel
+
+    async with get_session() as db:
+        team_res = await db.execute(
+            _sel(Team).where(Team.owner_id == message.from_user.id)
+        )
+        team = team_res.scalar_one_or_none()
+        if not team or not team.league_id:
+            await message.answer("❌ You don't own any league.")
+            return
+
+        league_res = await db.execute(
+            _sel(_League).where(_League.id == team.league_id)
+        )
+        league = league_res.scalar_one_or_none()
+        if not league or league.owner_id != message.from_user.id:
+            await message.answer("❌ Only the league owner can unlink a group.")
+            return
+
+        if not league.group_chat_id:
+            await message.answer("ℹ️ No group is currently linked to your league.")
+            return
+
+        league.group_chat_id = None
+        await db.commit()
+
+    await message.answer("✅ Group unlinked. Race broadcasts will only go to player DMs.")

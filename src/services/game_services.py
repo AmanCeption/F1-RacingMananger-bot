@@ -821,6 +821,10 @@ class RaceService:
                 "best_time": best_time,
             })
 
+        if not result.get("season_ended"):
+            result["season_ended"] = False
+            result["season_summary"] = None
+
         return {
             "race_name": race.name,
             "circuit": race.circuit,
@@ -1017,7 +1021,9 @@ class RaceService:
         if league:
             league.current_race += 1
             if league.current_race >= settings.SEASON_RACES:
-                await self._end_season(league)
+                season_summary = await self._end_season(league)
+                result["season_ended"] = True
+                result["season_summary"] = season_summary
 
         await self.db.flush()
 
@@ -1064,6 +1070,7 @@ class RaceService:
                 "position": car.position if not car.is_dnf else None,
                 "driver": car.driver_name,
                 "team": car.team_name,
+                "team_id": car.team_id,
                 "points": F1_POINTS.get(car.position, 0) if not car.is_dnf else 0,
                 "dnf": car.is_dnf,
                 "dnf_reason": car.dnf_reason,
@@ -1362,27 +1369,29 @@ class RaceService:
                     except Exception:
                         pass
 
-    async def _end_season(self, league: League):
-        """End season, award champions"""
-        # Find constructor champion
+    async def _end_season(self, league: League) -> dict:
+        """End season, award champions. Returns rich summary for the season-end screen."""
+        # ── Top 3 Constructors ───────────────────────────────────────────
         const_result = await self.db.execute(
             select(ConstructorStanding).where(
                 and_(ConstructorStanding.league_id == league.id,
                      ConstructorStanding.season == league.current_season)
-            ).order_by(ConstructorStanding.points.desc()).limit(1)
+            ).order_by(ConstructorStanding.points.desc()).limit(3)
         )
-        champion_team = const_result.scalar_one_or_none()
+        top_constructors = const_result.scalars().all()
+        champion_team = top_constructors[0] if top_constructors else None
 
-        # Find driver champion
+        # ── Top 3 Drivers ────────────────────────────────────────────────
         driver_result = await self.db.execute(
             select(DriverStanding).where(
                 and_(DriverStanding.league_id == league.id,
                      DriverStanding.season == league.current_season)
-            ).order_by(DriverStanding.points.desc()).limit(1)
+            ).order_by(DriverStanding.points.desc()).limit(3)
         )
-        champion_driver = driver_result.scalar_one_or_none()
+        top_drivers = driver_result.scalars().all()
+        champion_driver = top_drivers[0] if top_drivers else None
 
-        # Update season record
+        # ── Update season record ─────────────────────────────────────────
         season_result = await self.db.execute(
             select(Season).where(
                 and_(Season.league_id == league.id,
@@ -1398,116 +1407,99 @@ class RaceService:
             if champion_driver:
                 season.champion_driver_id = champion_driver.driver_id
 
-        # Award champion team + collect announcement data
-        season_summary = {
-            "season": league.current_season,
-            "league_name": league.name,
-            "constructor_champion_team_id": None,
-            "constructor_champion_name": None,
-            "constructor_champion_points": None,
-            "driver_champion_driver_id": None,
-            "driver_champion_name": None,
-            "driver_champion_points": None,
-            "driver_champion_team_name": None,
-        }
+        # ── Prize pool ───────────────────────────────────────────────────
+        prize_pool = {0: 100_000_000, 1: 50_000_000, 2: 25_000_000}
+        rep_bonus  = {0: 20, 1: 10, 2: 5}
+        constructor_payouts = []
+        for rank, cs in enumerate(top_constructors):
+            team_obj = await TeamService(self.db).get(cs.team_id)
+            if team_obj:
+                payout = prize_pool.get(rank, 10_000_000)
+                rep    = rep_bonus.get(rank, 0)
+                team_obj.budget += payout
+                team_obj.reputation = min(100, team_obj.reputation + rep)
+                constructor_payouts.append({
+                    "rank": rank + 1,
+                    "team_id": cs.team_id,
+                    "team_name": team_obj.name,
+                    "points": cs.points,
+                    "payout": payout,
+                })
 
-        if champion_team:
-            team = await TeamService(self.db).get(champion_team.team_id)
-            if team:
-                team.budget += 100_000_000  # Championship prize
-                team.reputation = min(100, team.reputation + 20)
-                team.wins += 0  # already tracked per race
-                season_summary["constructor_champion_team_id"] = team.id
-                season_summary["constructor_champion_name"] = team.name
-                season_summary["constructor_champion_points"] = champion_team.points
-                # Award achievement if applicable (best effort)
-                try:
-                    from src.models.models import Achievement, TeamAchievement
-                    ach_res = await self.db.execute(
-                        select(Achievement).where(Achievement.key == "constructor_champion")
+        # ── Driver champion name ──────────────────────────────────────────
+        driver_rows = []
+        for rank, ds in enumerate(top_drivers):
+            d_res = await self.db.execute(select(Driver).where(Driver.id == ds.driver_id))
+            d = d_res.scalar_one_or_none()
+            if d:
+                driver_rows.append({
+                    "rank": rank + 1,
+                    "driver_name": d.name,
+                    "points": ds.points,
+                })
+
+        # ── Driver development notifications ─────────────────────────────
+        dev_notifications = {}
+        all_drv_res = await self.db.execute(
+            select(TeamDriver, Driver).join(Driver, TeamDriver.driver_id == Driver.id)
+        )
+        for td, d in all_drv_res.all():
+            if d.age <= 25 and d.development_potential > 50:
+                improvement = int(d.development_potential / 20)
+                if improvement >= 1:
+                    msg = (
+                        f"🌱 <b>{d.name}</b> grew this season!\n"
+                        f"  ⚡ Pace +{improvement}  |  🧠 Skill +{improvement}\n"
+                        f"  📈 Dev Potential: {d.development_potential}/100"
                     )
-                    ach = ach_res.scalar_one_or_none()
-                    if ach:
-                        ta = TeamAchievement(team_id=team.id, achievement_id=ach.id)
-                        self.db.add(ta)
-                except Exception:
-                    pass
+                    existing = dev_notifications.get(td.team_id, "")
+                    dev_notifications[td.team_id] = existing + msg + "\n"
 
-        if champion_driver:
-            from src.models.models import Driver as DriverModel
-            drv_res = await self.db.execute(
-                select(DriverModel).where(DriverModel.id == champion_driver.driver_id)
-            )
-            drv = drv_res.scalar_one_or_none()
-            champ_team = await TeamService(self.db).get(champion_driver.team_id) if champion_driver.team_id else None
-            if drv:
-                drv.career_wins = getattr(drv, "career_wins", 0)  # already tracked
-                season_summary["driver_champion_driver_id"] = drv.id
-                season_summary["driver_champion_name"] = drv.name
-                season_summary["driver_champion_points"] = champion_driver.points
-                season_summary["driver_champion_team_name"] = champ_team.name if champ_team else "Unknown"
-
-        # Store summary on league object for notification service to pick up
-        league._season_summary = season_summary  # transient attr for this session
-
-        # Start new season
-        league.current_season += 1
-        league.current_race = 0
-        league.status = LeagueStatus.WAITING
-
-        # ── Driver Ageing & Retirement ─────────────────────────────────────
+        # ── Driver age/stats ─────────────────────────────────────────────
+        import random as _r
         all_drivers_result = await self.db.execute(select(Driver))
         retired_names = []
         for d in all_drivers_result.scalars().all():
             d.age += 1
-
-            # Young drivers improve based on development_potential
             if d.age <= 25 and d.development_potential > 50:
-                improvement = int(d.development_potential / 20)
-                d.skill        = min(99, d.skill        + improvement)
-                d.pace         = min(99, d.pace         + improvement)
-                d.racecraft    = min(99, d.racecraft    + max(1, improvement // 2))
-                d.consistency  = min(99, d.consistency  + max(1, improvement // 3))
-                # development_potential decays slightly each year
+                imp = int(d.development_potential / 20)
+                d.skill       = min(99, d.skill       + imp)
+                d.pace        = min(99, d.pace        + imp)
+                d.racecraft   = min(99, d.racecraft   + max(1, imp // 2))
+                d.consistency = min(99, d.consistency + max(1, imp // 3))
                 d.development_potential = max(0, d.development_potential - 5)
-
-            # Peak drivers (26-32) — tiny stat drift ±1
             elif 26 <= d.age <= 32:
-                import random as _r
                 d.skill = min(99, max(60, d.skill + _r.randint(-1, 1)))
-
-            # Veteran decline (33-37)
             elif 33 <= d.age <= 37:
                 d.skill       = max(40, d.skill       - 1)
                 d.pace        = max(40, d.pace        - 1)
                 d.consistency = max(40, d.consistency - 1)
                 d.development_potential = max(0, d.development_potential - 10)
-
-            # Over 38 — near retirement
             elif d.age >= 38:
                 d.skill       = max(30, d.skill       - 2)
                 d.pace        = max(30, d.pace        - 2)
                 d.consistency = max(30, d.consistency - 2)
                 d.development_potential = max(0, d.development_potential - 20)
-
-                # Retire if dev_potential hits 0 (random chance increases with age)
-                retire_chance = (d.age - 37) * 0.15  # 15% at 38, 30% at 39...
+                retire_chance = (d.age - 37) * 0.15
                 if d.development_potential <= 0 and _r.random() < min(0.9, retire_chance):
-                    if d.is_free_agent:  # only retire free agents (no active contract)
+                    if d.is_free_agent:
                         retired_names.append(d.name)
-                        d.is_free_agent = False  # marks as retired (off market)
+                        d.is_free_agent = False
 
-        if retired_names:
-            logger.info(f"Season end — retired drivers: {', '.join(retired_names)}")
+        # ── Start new season ──────────────────────────────────────────────
+        league.current_season += 1
+        league.current_race = 0
+        league.status = LeagueStatus.WAITING
 
+        return {
+            "season_number": league.current_season - 1,
+            "league_name": league.name,
+            "constructors": constructor_payouts,
+            "drivers": driver_rows,
+            "dev_notifications": dev_notifications,
+            "retired_drivers": retired_names,
+        }
 
-# ─────────────────────────────────────────────
-# RESEARCH SERVICE
-# ─────────────────────────────────────────────
-
-class ResearchService:
-    def __init__(self, db: AsyncSession):
-        self.db = db
 
     async def start_research(self, team_id: int, tree: str, node_key: str) -> tuple[bool, str]:
         if tree not in RESEARCH_TREES:

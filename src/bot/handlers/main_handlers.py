@@ -921,6 +921,74 @@ async def market_sell_menu(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.message(Command("driver"))
+async def cmd_driver_card(message: Message):
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Usage: /driver <driver_id>\n\nFind IDs via /market → Free Agents or Transfer List.")
+        return
+
+    try:
+        driver_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ Invalid driver ID!")
+        return
+
+    async with get_session() as db:
+        from src.models.models import Driver as DriverModel, TeamDriver, Team
+        driver_res = await db.execute(
+            select(DriverModel).where(DriverModel.id == driver_id)
+        )
+        driver = driver_res.scalar_one_or_none()
+        if not driver:
+            await message.answer("❌ Driver not found! Check the ID.")
+            return
+
+        # Find current team if contracted
+        current_team = None
+        if not driver.is_free_agent:
+            team_res = await db.execute(
+                select(Team)
+                .join(TeamDriver, TeamDriver.team_id == Team.id)
+                .where(TeamDriver.driver_id == driver_id)
+            )
+            team_obj = team_res.scalar_one_or_none()
+            current_team = team_obj.name if team_obj else None
+
+    from src.services.driver_card import generate_driver_card
+    from aiogram.types import BufferedInputFile
+
+    try:
+        img_bytes = generate_driver_card(
+            name=driver.name,
+            nationality=driver.nationality,
+            age=driver.age,
+            number=driver.number,
+            is_fictional=driver.is_fictional,
+            skill=driver.skill,
+            racecraft=driver.racecraft,
+            pace=driver.pace,
+            consistency=driver.consistency,
+            wet_weather=driver.wet_weather,
+            overtaking=driver.overtaking,
+            defence=driver.defence,
+            development_potential=driver.development_potential,
+            base_salary=driver.base_salary,
+            is_free_agent=driver.is_free_agent,
+            current_team=current_team,
+        )
+        photo = BufferedInputFile(img_bytes, filename=f"driver_{driver_id}.png")
+        status = "🟢 Free Agent" if driver.is_free_agent else f"🔴 Signed ({current_team or 'Unknown'})"
+        await message.answer_photo(
+            photo,
+            caption=f"<b>{driver.name}</b> | {status}\nUse /buydriver {driver_id} to sign.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"Driver card generation failed: {e}")
+        await message.answer("❌ Couldn't generate driver card. Try again!")
+
+
 @router.message(Command("buydriver"))
 async def cmd_buy_driver(message: Message):
     parts = message.text.split()

@@ -1962,6 +1962,69 @@ async def cmd_runrace(message: Message):
         text += "\n✅ Points & standings updated!"
         await message.answer(text)
 
+    # ── PERSONAL TEAM HIGHLIGHT ──────────────────────────────────────
+    # Send every team owner their own result privately (or in-chat if solo)
+    if results_list:
+        # Find the calling user's team result
+        async with get_session() as db_ph:
+            my_team = await TeamService(db_ph).get_by_owner(message.from_user.id)
+            my_team_id = my_team.id if my_team else None
+
+        if my_team_id:
+            my_result = next(
+                (r for r in results_list if r.get("team_id") == my_team_id), None
+            )
+            if my_result:
+                pos = my_result.get("position")
+                pts = my_result.get("points", 0)
+                driver_name = safe(my_result.get("driver", ""))
+                fl_tag = "  ⚡ <b>Fastest Lap!</b>" if my_result.get("fastest_lap") else ""
+                gap = my_result.get("gap_to_leader")
+                gap_str = f"  +{gap:.3f}s to leader" if gap and not my_result.get("dnf") else ""
+                pits = my_result.get("pit_stops", 0)
+
+                if my_result.get("dnf"):
+                    pos_str = "💥 DNF"
+                    reason = f" — {safe(my_result.get('dnf_reason', 'Mechanical'))}"
+                    pts_str = "0 points"
+                    highlight_color = "❌"
+                elif pos == 1:
+                    pos_str = "🥇 P1 — VICTORY!"
+                    reason = ""
+                    pts_str = f"+{pts} pts"
+                    highlight_color = "🏆"
+                elif pos == 2:
+                    pos_str = "🥈 P2 — Podium!"
+                    reason = ""
+                    pts_str = f"+{pts} pts"
+                    highlight_color = "🎉"
+                elif pos == 3:
+                    pos_str = "🥉 P3 — Podium!"
+                    reason = ""
+                    pts_str = f"+{pts} pts"
+                    highlight_color = "🎉"
+                elif pos and pos <= 10:
+                    pos_str = f"✅ P{pos} — Points finish"
+                    reason = ""
+                    pts_str = f"+{pts} pts"
+                    highlight_color = "📊"
+                else:
+                    pos_str = f"P{pos}" if pos else "—"
+                    reason = ""
+                    pts_str = "0 pts"
+                    highlight_color = "📋"
+
+                personal_msg = (
+                    f"{highlight_color} <b>YOUR RESULT — {safe(race_name)}</b>\n\n"
+                    f"🏎️ Driver: <b>{driver_name}</b>\n"
+                    f"🏁 Result: <b>{pos_str}</b>{reason}\n"
+                    f"💰 Points: <b>{pts_str}</b>{fl_tag}\n"
+                    + (f"⏱️ Gap: {gap_str}\n" if gap_str else "")
+                    + f"🔄 Pit Stops: {pits}\n\n"
+                    f"<i>/standings — Full championship table</i>"
+                )
+                await message.answer(personal_msg)
+
     # ── CIRCUIT INFO CARD ─────────────────────────────────────────────
     try:
         from src.services.circuit_images import generate_circuit_card
@@ -2013,6 +2076,84 @@ async def cmd_runrace(message: Message):
             f"<i>Your answer affects team reputation!</i>",
             reply_markup=kb,
         )
+
+    # ── SEASON END GRAND SCREEN ───────────────────────────────────────
+    if result.get("season_ended") and result.get("season_summary"):
+        ss = result["season_summary"]
+        season_num   = ss.get("season_number", "?")
+        league_name  = ss.get("league_name", "League")
+        constructors = ss.get("constructors", [])
+        drivers      = ss.get("drivers", [])
+        dev_notifs   = ss.get("dev_notifications", {})
+        retired      = ss.get("retired_drivers", [])
+
+        # Build text announcement
+        medals = ["🥇", "🥈", "🥉"]
+        const_lines = []
+        for row in constructors:
+            m = medals[row["rank"] - 1] if row["rank"] <= 3 else f"P{row['rank']}"
+            crown = " 👑 CHAMPIONS!" if row["rank"] == 1 else ""
+            payout_str = f"${row['payout'] // 1_000_000}M prize" if row.get("payout") else ""
+            const_lines.append(
+                f"{m} <b>{safe(row['team_name'])}</b> — {row['points']} pts{crown}"
+                + (f"  💰 {payout_str}" if payout_str else "")
+            )
+        driver_lines = []
+        for row in drivers:
+            m = medals[row["rank"] - 1] if row["rank"] <= 3 else f"P{row['rank']}"
+            crown = " 🏆 CHAMPION!" if row["rank"] == 1 else ""
+            driver_lines.append(f"{m} <b>{safe(row['driver_name'])}</b> — {row['points']} pts{crown}")
+
+        season_text = (
+            f"🏁🏆 <b>SEASON {season_num} COMPLETE — {safe(league_name)}</b> 🏆🏁\n\n"
+            f"🏗️ <b>Constructor Championship:</b>\n"
+            + "\n".join(const_lines or ["No data"])
+            + f"\n\n🏎️ <b>Drivers Championship:</b>\n"
+            + "\n".join(driver_lines or ["No data"])
+            + (f"\n\n🚀 <b>New Season {season_num + 1} begins!</b> Use /startseason to kick off." if constructors else "")
+        )
+        if retired:
+            season_text += f"\n\n👴 <b>Retired this season:</b> {', '.join(retired)}"
+
+        await message.answer(season_text)
+
+        # Championship standings image
+        try:
+            from src.services.standings_image import generate_constructor_championship_image
+            from aiogram.types import BufferedInputFile as BICSI
+            champ_img = generate_constructor_championship_image(
+                league_name=league_name,
+                season=season_num,
+                standings=constructors,
+                drivers=drivers,
+            )
+            await message.answer_photo(
+                BICSI(champ_img, filename="championship.png"),
+                caption=f"🏆 <b>Season {season_num} — Final Constructor Standings</b>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning(f"Championship image failed: {e}")
+
+        # Send driver development notifications privately
+        if dev_notifs:
+            async with get_session() as db_devn:
+                from src.models.models import Team as _TM
+                from sqlalchemy import select as _sel_dn
+                teams_res = await db_devn.execute(
+                    _sel_dn(_TM).where(_TM.league_id == team.league_id)
+                )
+                for t_obj in teams_res.scalars().all():
+                    notif = dev_notifs.get(t_obj.id)
+                    if notif and t_obj.owner_id:
+                        try:
+                            await message.bot.send_message(
+                                t_obj.owner_id,
+                                f"📈 <b>Driver Development Report — End of Season {season_num}</b>\n\n{notif}",
+                                parse_mode="HTML"
+                            )
+                        except Exception:
+                            pass
 
     # ── PRIVATE STAFF INSIGHTS / POST-RACE DEBRIEF ───────────────────
     staff_insights = result.get("staff_insights", {})

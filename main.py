@@ -43,6 +43,17 @@ async def run_migrations():
                 "ALTER TABLE staff ADD COLUMN IF NOT EXISTS specialty VARCHAR(64)"
             ))
 
+            # New columns: login streak, sponsor termination tracking
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS login_streak INTEGER DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE team_sponsors ADD COLUMN IF NOT EXISTS terminated_by VARCHAR(16)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE team_sponsors ADD COLUMN IF NOT EXISTS termination_reason TEXT"
+            ))
+
             # Add unique constraints on standings tables (safe — IF NOT EXISTS)
             for constraint_sql in [
                 """

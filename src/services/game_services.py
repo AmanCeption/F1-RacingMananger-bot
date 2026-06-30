@@ -15,7 +15,8 @@ from src.models.models import (
     Race, RaceResult, RaceStrategy, QualifyingResult, Season,
     DriverStanding, ConstructorStanding, DriverTransfer, Sponsor,
     TeamSponsor, ResearchProject, Achievement, TeamAchievement,
-    AdminLog, SuspiciousActivity, LeagueStatus, RaceStatus, TransferStatus
+    AdminLog, SuspiciousActivity, RacePrediction,
+    LeagueStatus, RaceStatus, TransferStatus
 )
 from src.core.config import settings, F1_POINTS, F1_CALENDAR
 from src.simulation.driver_db import REAL_DRIVERS, FICTIONAL_DRIVERS, STAFF_DATABASE, SPONSORS, ACHIEVEMENTS, RESEARCH_TREES
@@ -1007,6 +1008,13 @@ class RaceService:
         except Exception as e:
             logger.error(f"Achievement check failed for race {race.id}: {e}")
 
+        # ── Step 4b: Score race predictions (independent) ──────────────────────
+        prediction_results = []
+        try:
+            prediction_results = await self._score_predictions(race.id, result)
+        except Exception as e:
+            logger.error(f"Prediction scoring failed for race {race.id}: {e}")
+
         # ── Step 5: Mark race finished & generate staff insights ──────────────
         race.status = RaceStatus.FINISHED
         race.finished_at = datetime.utcnow()
@@ -1100,6 +1108,7 @@ class RaceService:
             "radio_highlights": radio_highlights[:4],  # max 4 radio msgs
             "press_question": press_question,
             "is_sprint_round": is_sprint_round,
+            "prediction_results": prediction_results,
         }
 
     # ── Private sub-methods ──────────────────────────────────────────────────
@@ -1141,7 +1150,74 @@ class RaceService:
                 pos == 1, bool(pos and pos <= 3), car.has_fastest_lap,
             )
 
-    async def _award_prize_money(self, teams: list, result: dict):
+    async def _score_predictions(self, race_id: int, result: dict) -> list:
+        """
+        Score all unscored predictions for this race.
+        Scoring: +5 pts exact P1, +3 exact P2, +3 exact P3, +2 per correct team
+        anywhere in predicted podium (regardless of exact slot), bonus +5 if
+        all 3 positions match exactly (perfect podium).
+        Returns a list of dicts for broadcasting results to predictors.
+        """
+        preds_res = await self.db.execute(
+            select(RacePrediction).where(
+                and_(RacePrediction.race_id == race_id, RacePrediction.scored == False)
+            )
+        )
+        predictions = preds_res.scalars().all()
+        if not predictions:
+            return []
+
+        # Build actual podium from result (only real teams, not AI fillers)
+        finishers = [c for c in result["results"] if not c.is_dnf and c.team_id > 0]
+        actual_podium = [c.team_id for c in finishers[:3]]
+        while len(actual_podium) < 3:
+            actual_podium.append(None)
+        actual_p1, actual_p2, actual_p3 = actual_podium[0], actual_podium[1], actual_podium[2]
+
+        scored_list = []
+        for pred in predictions:
+            score = 0
+            if pred.p1_team_id == actual_p1 and actual_p1 is not None:
+                score += 5
+            if pred.p2_team_id == actual_p2 and actual_p2 is not None:
+                score += 3
+            if pred.p3_team_id == actual_p3 and actual_p3 is not None:
+                score += 3
+
+            predicted_set = {pred.p1_team_id, pred.p2_team_id, pred.p3_team_id}
+            actual_set = {t for t in (actual_p1, actual_p2, actual_p3) if t is not None}
+            correct_anywhere = len(predicted_set & actual_set)
+            score += correct_anywhere * 2
+
+            perfect = (
+                pred.p1_team_id == actual_p1
+                and pred.p2_team_id == actual_p2
+                and pred.p3_team_id == actual_p3
+                and actual_p1 is not None
+            )
+            if perfect:
+                score += 5
+
+            pred.score = score
+            pred.scored = True
+
+            # Award small in-game money reward proportional to score
+            if score > 0:
+                team = await self.db.get(Team, pred.team_id)
+                if team:
+                    team.budget += score * 50_000
+
+            scored_list.append({
+                "user_id": pred.user_id,
+                "team_id": pred.team_id,
+                "score": score,
+                "perfect": perfect,
+            })
+
+        await self.db.flush()
+        return scored_list
+
+
         """Pay top-10 finishers their prize money."""
         prizes = [5_000_000, 3_000_000, 2_000_000, 1_500_000, 1_000_000,
                   800_000, 600_000, 400_000, 200_000, 100_000]

@@ -194,6 +194,8 @@ async def cmd_help(message: Message):
             "/strategy — Set tyre compound + stop strategy\n"
             "/practice — Get a circuit preview + weather forecast\n"
             "/nextrace — See when the next race is\n"
+            "/mycalendar — Full season schedule\n"
+            "/predict — Predict the next race podium\n"
             "/runrace — Trigger next race (league owner only)\n\n"
             "<i>Tip: Always check /practice before setting strategy — weather changes everything.</i>"
         )
@@ -214,6 +216,8 @@ async def cmd_help(message: Message):
             "/startseason — Start the season (league owner)\n"
             "/runrace — Run the next race (league owner)\n"
             "/standings — Driver + Constructor standings\n"
+            "/setgroup — Link a Telegram group (run inside group, owner only)\n"
+            "/unsetgroup — Unlink the group\n"
             "/leaveleague — Leave your current league\n"
             "/deleteleague — Delete league (owner only)\n\n"
             "<i>Tip: You need at least 2 teams before starting a season.</i>"
@@ -259,6 +263,12 @@ async def cmd_help(message: Message):
             "/profile — Your career stats\n"
             "/halloffame — All-time records\n"
             "/h2h @user — Head to head\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🆕 <b>New</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "/predict — Pick the next race podium\n"
+            "/mycalendar — Full season schedule\n"
+            "/setgroup — Link race broadcasts to a group\n\n"
             "<i>Built by @amanception</i>"
         )
 

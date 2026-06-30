@@ -26,8 +26,10 @@ GROUP_ALLOWED_COMMANDS = {
     # Public info
     "start", "help", "standings", "nextrace",
     "halloffame", "h2h", "search", "profile",
+    "mycalendar",
     # Race Weekend — allowed in groups
     "practice", "qualifying", "strategy", "runrace", "sprintrace", "startseason",
+    "predict",
     # Onboarding — allowed in groups
     "tutorial",
     # Group linking — must be run in group

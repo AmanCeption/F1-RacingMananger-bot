@@ -504,6 +504,29 @@ class TeamAchievement(Base):
 
 
 # ─────────────────────────────────────────────
+# RACE PREDICTIONS
+# ─────────────────────────────────────────────
+
+class RacePrediction(Base):
+    __tablename__ = "race_predictions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    race_id: Mapped[int] = mapped_column(Integer, ForeignKey("races.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"))
+    p1_team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    p2_team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    p3_team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
+    score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # filled after race
+    scored: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("race_id", "user_id", name="uq_prediction_race_user"),
+    )
+
+
+# ─────────────────────────────────────────────
 # ADMIN LOG
 # ─────────────────────────────────────────────
 

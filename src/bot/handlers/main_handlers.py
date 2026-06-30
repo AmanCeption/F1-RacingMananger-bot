@@ -2295,6 +2295,15 @@ async def cmd_runrace(message: Message):
         league_group_chat_id = league.group_chat_id if league else None
         caller_user_id = message.from_user.id
 
+        # Snapshot pre-race constructor standings (for /teamnews-style digest)
+        pre_race_standing_rows = await StandingsService(db).get_constructor_standings(league_id)
+        pre_race_positions = {
+            row[1].id: idx + 1 for idx, row in enumerate(pre_race_standing_rows)
+        }
+        pre_race_points = {
+            row[1].id: row[0].points for row in pre_race_standing_rows
+        }
+
     # ── Announce (outside session — no DB connection held during sleep) ──
     await message.answer(announce_text)
     # Broadcast race start to all other league members
@@ -2541,6 +2550,170 @@ async def cmd_runrace(message: Message):
             else:
                 try:
                     await message.bot.send_message(owner_id, personal_msg, parse_mode="HTML")
+                except Exception:
+                    pass
+
+    # ── LEAGUE DIGEST (auto /teamnews) ──────────────────────────────────
+    try:
+        async with get_session() as db_digest:
+            post_race_rows = await StandingsService(db_digest).get_constructor_standings(league_id)
+            post_race_positions = {
+                row[1].id: idx + 1 for idx, row in enumerate(post_race_rows)
+            }
+
+            digest_lines = [f"📰 <b>LEAGUE DIGEST — {safe(race_name)}</b>\n"]
+
+            # Race headline
+            winner_entry = next((r for r in results_list if r.get("position") == 1), None)
+            if winner_entry:
+                digest_lines.append(
+                    f"🏆 <b>{safe(winner_entry.get('team',''))}</b> takes victory "
+                    f"with {safe(winner_entry.get('driver',''))}!"
+                )
+
+            # Biggest mover (up)
+            movers = []
+            for team_id, new_pos in post_race_positions.items():
+                old_pos = pre_race_positions.get(team_id)
+                if old_pos is None:
+                    continue
+                delta = old_pos - new_pos  # positive = moved up
+                if delta != 0:
+                    movers.append((team_id, delta, old_pos, new_pos))
+
+            movers_up = sorted([m for m in movers if m[1] > 0], key=lambda m: -m[1])
+            movers_down = sorted([m for m in movers if m[1] < 0], key=lambda m: m[1])
+
+            if movers_up:
+                tid, delta, old_p, new_p = movers_up[0]
+                t = await db_digest.get(Team, tid)
+                if t:
+                    digest_lines.append(
+                        f"📈 <b>{safe(t.name)}</b> climbs to P{new_p} in the championship "
+                        f"(up {delta} spot{'s' if delta > 1 else ''})"
+                    )
+            if movers_down:
+                tid, delta, old_p, new_p = movers_down[0]
+                t = await db_digest.get(Team, tid)
+                if t:
+                    digest_lines.append(
+                        f"📉 <b>{safe(t.name)}</b> slips to P{new_p} "
+                        f"(down {abs(delta)} spot{'s' if abs(delta) > 1 else ''})"
+                    )
+
+            # Standings leader
+            if post_race_rows:
+                leader_standing, leader_team = post_race_rows[0]
+                digest_lines.append(
+                    f"👑 Championship lead: <b>{safe(leader_team.name)}</b> "
+                    f"({leader_standing.points} pts)"
+                )
+
+            # DNF count
+            dnf_count = sum(1 for r in results_list if r.get("dnf"))
+            if dnf_count > 0:
+                digest_lines.append(f"💥 {dnf_count} retirement{'s' if dnf_count != 1 else ''} this race")
+
+            # ── WEEKLY AWARDS ──
+            award_lines = ["\n🏅 <b>RACE AWARDS</b>"]
+
+            finishers_only = [r for r in results_list if not r.get("dnf") and r.get("position")]
+            fastest_lap_driver = next((r for r in results_list if r.get("fastest_lap")), None)
+            winner = next((r for r in finishers_only if r["position"] == 1), None)
+
+            dotd = None
+            dotd_reason = ""
+            if winner:
+                gap = winner.get("gap_to_leader") or 0
+                runner_up = next((r for r in finishers_only if r["position"] == 2), None)
+                runner_up_gap = runner_up.get("gap_to_leader") if runner_up else None
+                if runner_up_gap and (runner_up_gap - gap) > 15:
+                    dotd = winner
+                    dotd_reason = "dominant lights-to-flag victory"
+            if not dotd and fastest_lap_driver and fastest_lap_driver.get("position") and fastest_lap_driver["position"] <= 5:
+                dotd = fastest_lap_driver
+                dotd_reason = "fastest lap + strong finish"
+            if not dotd and winner:
+                dotd = winner
+                dotd_reason = "race victory"
+
+            if dotd:
+                award_lines.append(
+                    f"🌟 <b>Driver of the Day:</b> {safe(dotd.get('driver',''))} "
+                    f"({safe(dotd.get('team',''))}) — {dotd_reason}"
+                )
+
+            team_race_points = {}
+            for r in results_list:
+                tid = r.get("team_id")
+                if tid and tid > 0:
+                    team_race_points[tid] = team_race_points.get(tid, 0) + r.get("points", 0)
+            if team_race_points:
+                best_team_id = max(team_race_points, key=team_race_points.get)
+                best_team_pts = team_race_points[best_team_id]
+                if best_team_pts > 0:
+                    best_team_obj = await db_digest.get(Team, best_team_id)
+                    if best_team_obj:
+                        award_lines.append(
+                            f"🏗️ <b>Team of the Week:</b> {safe(best_team_obj.name)} "
+                            f"({best_team_pts} pts this race)"
+                        )
+
+            if len(award_lines) > 1:
+                digest_lines.extend(award_lines)
+
+            digest_lines.append("\n<i>/standings — Full championship table · /mycalendar — Season schedule</i>")
+            digest_msg = "\n".join(digest_lines)
+
+            await message.answer(digest_msg)
+            for (owner_id, _tid) in all_league_teams_broadcast:
+                if owner_id == caller_user_id:
+                    continue
+                try:
+                    await message.bot.send_message(owner_id, digest_msg, parse_mode="HTML")
+                except Exception:
+                    pass
+            if league_group_chat_id:
+                try:
+                    await message.bot.send_message(league_group_chat_id, digest_msg, parse_mode="HTML")
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"League digest failed: {e}")
+
+    # ── PREDICTION RESULTS ────────────────────────────────────────────
+    pred_results = result.get("prediction_results", [])
+    if pred_results:
+        scored_sorted = sorted(pred_results, key=lambda p: p["score"], reverse=True)
+        has_scorers = any(p["score"] > 0 for p in scored_sorted)
+        if has_scorers:
+            # Fetch usernames for a readable leaderboard
+            async with get_session() as db_pred:
+                user_lines = []
+                for p in scored_sorted:
+                    if p["score"] <= 0:
+                        continue
+                    t = await db_pred.get(Team, p["team_id"])
+                    tname = safe(t.name) if t else "Unknown"
+                    tag = "  💯 PERFECT!" if p["perfect"] else ""
+                    user_lines.append(f"  {tname}: +{p['score']} pts{tag}")
+
+            pred_msg = (
+                f"🔮 <b>PREDICTION LEADERBOARD — {safe(race_name)}</b>\n\n"
+                + "\n".join(user_lines)
+                + "\n\n<i>/predict — Predict the next race podium!</i>"
+            )
+            await message.answer(pred_msg)
+            for (owner_id, _tid) in all_league_teams_broadcast:
+                if owner_id == caller_user_id:
+                    continue
+                try:
+                    await message.bot.send_message(owner_id, pred_msg, parse_mode="HTML")
+                except Exception:
+                    pass
+            if league_group_chat_id:
+                try:
+                    await message.bot.send_message(league_group_chat_id, pred_msg, parse_mode="HTML")
                 except Exception:
                     pass
 
@@ -3743,3 +3916,243 @@ async def cmd_unsetgroup(message: Message):
         await db.commit()
 
     await message.answer("✅ Group unlinked. Race broadcasts will only go to player DMs.")
+
+
+# ─────────────────────────────────────────────
+# /mycalendar — Full season schedule
+# ─────────────────────────────────────────────
+
+@router.message(Command("mycalendar"))
+async def cmd_mycalendar(message: Message):
+    """Show the full season calendar with status of every race."""
+    from src.models.models import Race, RaceStatus as RS
+    from sqlalchemy import select as sa_select
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first with /register!")
+            return
+        if not team.league_id:
+            await message.answer("❌ Join a league first!")
+            return
+
+        races_res = await db.execute(
+            sa_select(Race).where(Race.league_id == team.league_id).order_by(Race.round.asc())
+        )
+        races = races_res.scalars().all()
+
+        if not races:
+            await message.answer(
+                "📅 <b>Season Calendar</b>\n\n"
+                "League season hasn't started yet. Ask the league owner to run /startseason."
+            )
+            return
+
+        lines = [f"📅 <b>SEASON {races[0].season} CALENDAR</b>\n"]
+        status_icons = {
+            RS.SCHEDULED: "⬜",
+            RS.PRACTICE: "🟡",
+            RS.QUALIFYING: "🟠",
+            RS.RACING: "🔴",
+            RS.FINISHED: "✅",
+        }
+        next_marked = False
+        for r in races:
+            icon = status_icons.get(r.status, "⬜")
+            sprint_tag = " 🏃" if any(
+                c.get("name") == r.name and c.get("sprint") for c in F1_CALENDAR
+            ) else ""
+            marker = ""
+            if r.status == RS.SCHEDULED and not next_marked:
+                marker = "  ⬅️ <b>NEXT</b>"
+                next_marked = True
+            lines.append(
+                f"{icon} R{r.round:>2}  {r.country} <b>{safe(r.name)}</b>{sprint_tag}{marker}"
+            )
+
+        finished_count = sum(1 for r in races if r.status == RS.FINISHED)
+        lines.append(f"\n📊 Progress: {finished_count}/{len(races)} races complete")
+        lines.append("\n<i>✅ Done · 🔴 Live · 🟠 Qualifying · 🟡 Practice · ⬜ Upcoming · 🏃 Sprint weekend</i>")
+
+        await message.answer("\n".join(lines))
+
+
+# ─────────────────────────────────────────────
+# /predict — Predict the podium for the next race
+# ─────────────────────────────────────────────
+
+@router.message(Command("predict"))
+async def cmd_predict(message: Message):
+    """Show inline buttons to pick P1 for the next race."""
+    from src.models.models import Race, RaceStatus as RS, RacePrediction
+    from sqlalchemy import select as sa_select
+
+    async with get_session() as db:
+        team = await TeamService(db).get_by_owner(message.from_user.id)
+        if not team:
+            await message.answer("❌ Register first with /register!")
+            return
+        if not team.league_id:
+            await message.answer("❌ Join a league first!")
+            return
+
+        race_res = await db.execute(
+            sa_select(Race).where(
+                and_(Race.league_id == team.league_id, Race.status == RS.SCHEDULED)
+            ).order_by(Race.round.asc()).limit(1)
+        )
+        race = race_res.scalar_one_or_none()
+        if not race:
+            await message.answer("❌ No upcoming race to predict! Check /mycalendar.")
+            return
+
+        # Already predicted?
+        existing_res = await db.execute(
+            sa_select(RacePrediction).where(
+                and_(RacePrediction.race_id == race.id, RacePrediction.user_id == message.from_user.id)
+            )
+        )
+        existing = existing_res.scalar_one_or_none()
+        if existing:
+            t1 = await db.get(Team, existing.p1_team_id)
+            t2 = await db.get(Team, existing.p2_team_id)
+            t3 = await db.get(Team, existing.p3_team_id)
+            await message.answer(
+                f"✅ <b>You already predicted Round {race.round}!</b>\n\n"
+                f"🥇 {safe(t1.name) if t1 else '?'}\n"
+                f"🥈 {safe(t2.name) if t2 else '?'}\n"
+                f"🥉 {safe(t3.name) if t3 else '?'}\n\n"
+                f"Results will be scored automatically after /runrace."
+            )
+            return
+
+        teams_res = await db.execute(
+            sa_select(Team).where(Team.league_id == team.league_id).order_by(Team.name.asc())
+        )
+        all_teams = teams_res.scalars().all()
+        if len(all_teams) < 3:
+            await message.answer("❌ Need at least 3 teams in the league to predict a podium.")
+            return
+
+        builder = InlineKeyboardBuilder()
+        for t in all_teams:
+            builder.row(InlineKeyboardButton(
+                text=f"🥇 {t.name}",
+                callback_data=f"pred:1:{race.id}:{t.id}"
+            ))
+        builder.row(InlineKeyboardButton(text="❌ Cancel", callback_data="pred:cancel"))
+
+        await message.answer(
+            f"🔮 <b>PREDICT THE PODIUM — Round {race.round}: {safe(race.name)}</b>\n\n"
+            f"Step 1/3 — Who finishes <b>P1</b>?",
+            reply_markup=builder.as_markup(),
+        )
+
+
+@router.callback_query(F.data.startswith("pred:"))
+async def cb_predict_step(callback: CallbackQuery):
+    from src.models.models import Race, RacePrediction
+    from sqlalchemy import select as sa_select
+
+    parts = callback.data.split(":")
+    if parts[1] == "cancel":
+        await callback.message.edit_text("❌ Prediction cancelled.")
+        await callback.answer()
+        return
+
+    step = int(parts[1])       # 1, 2, or 3
+    race_id = int(parts[2])
+    picked_team_id = int(parts[3])
+
+    async with get_session() as db:
+        race = await db.get(Race, race_id)
+        if not race:
+            await callback.answer("Race not found.", show_alert=True)
+            return
+
+        teams_res = await db.execute(
+            sa_select(Team).where(Team.league_id == race.league_id).order_by(Team.name.asc())
+        )
+        all_teams = teams_res.scalars().all()
+        picked_team = next((t for t in all_teams if t.id == picked_team_id), None)
+        if not picked_team:
+            await callback.answer("Team not found.", show_alert=True)
+            return
+
+        if step == 1:
+            builder = InlineKeyboardBuilder()
+            for t in all_teams:
+                if t.id == picked_team_id:
+                    continue
+                builder.row(InlineKeyboardButton(
+                    text=f"🥈 {t.name}",
+                    callback_data=f"pred:2:{race_id}:{t.id}:{picked_team_id}"
+                ))
+            builder.row(InlineKeyboardButton(text="❌ Cancel", callback_data="pred:cancel"))
+            await callback.message.edit_text(
+                f"🔮 <b>PREDICT THE PODIUM — Round {race.round}: {safe(race.name)}</b>\n\n"
+                f"🥇 {safe(picked_team.name)}\n\n"
+                f"Step 2/3 — Who finishes <b>P2</b>?",
+                reply_markup=builder.as_markup(),
+            )
+            await callback.answer()
+            return
+
+        if step == 2:
+            p1_team_id = int(parts[4])
+            p1_team = next((t for t in all_teams if t.id == p1_team_id), None)
+            builder = InlineKeyboardBuilder()
+            for t in all_teams:
+                if t.id in (p1_team_id, picked_team_id):
+                    continue
+                builder.row(InlineKeyboardButton(
+                    text=f"🥉 {t.name}",
+                    callback_data=f"pred:3:{race_id}:{t.id}:{p1_team_id}:{picked_team_id}"
+                ))
+            builder.row(InlineKeyboardButton(text="❌ Cancel", callback_data="pred:cancel"))
+            await callback.message.edit_text(
+                f"🔮 <b>PREDICT THE PODIUM — Round {race.round}: {safe(race.name)}</b>\n\n"
+                f"🥇 {safe(p1_team.name) if p1_team else '?'}\n"
+                f"🥈 {safe(picked_team.name)}\n\n"
+                f"Step 3/3 — Who finishes <b>P3</b>?",
+                reply_markup=builder.as_markup(),
+            )
+            await callback.answer()
+            return
+
+        if step == 3:
+            p1_team_id = int(parts[4])
+            p2_team_id = int(parts[5])
+            p3_team_id = picked_team_id
+
+            p1_team = next((t for t in all_teams if t.id == p1_team_id), None)
+            p2_team = next((t for t in all_teams if t.id == p2_team_id), None)
+            p3_team = next((t for t in all_teams if t.id == p3_team_id), None)
+
+            my_team = await TeamService(db).get_by_owner(callback.from_user.id)
+            if not my_team:
+                await callback.answer("Team not found.", show_alert=True)
+                return
+
+            prediction = RacePrediction(
+                race_id=race_id,
+                user_id=callback.from_user.id,
+                team_id=my_team.id,
+                p1_team_id=p1_team_id,
+                p2_team_id=p2_team_id,
+                p3_team_id=p3_team_id,
+            )
+            db.add(prediction)
+            await db.commit()
+
+            await callback.message.edit_text(
+                f"✅ <b>Prediction Locked In — Round {race.round}: {safe(race.name)}</b>\n\n"
+                f"🥇 {safe(p1_team.name) if p1_team else '?'}\n"
+                f"🥈 {safe(p2_team.name) if p2_team else '?'}\n"
+                f"🥉 {safe(p3_team.name) if p3_team else '?'}\n\n"
+                f"💰 Scoring: +5 exact P1 · +3 exact P2 · +3 exact P3\n"
+                f"+2 per correct team anywhere in podium · +5 perfect podium bonus\n\n"
+                f"Results auto-score after /runrace!"
+            )
+            await callback.answer("Prediction saved! 🔮")
